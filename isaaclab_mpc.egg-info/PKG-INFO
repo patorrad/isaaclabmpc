@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: isaaclab_mpc
+Version: 0.1.0
+Summary: MPPI controller with Isaac Lab as the dynamics model
+Requires-Python: >=3.11
+Requires-Dist: zerorpc
+Requires-Dist: pyyaml
+Requires-Dist: torch
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

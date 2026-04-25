@@ -1,0 +1,55 @@
+# Configuration for ur16e_force_reach example.
+#
+# The robot is controlled in joint-torque (effort) space.  MPPI optimises
+# residual torques on top of gravity compensation, so u represents the
+# additional torque each joint should exert — not a velocity command.
+#
+# Action space: joint torques [Nm], 6-DOF
+# Noise scale:  ~5 Nm for shoulder joints, ~2 Nm for wrist joints
+
+n_steps: 10000
+
+# State dimension: 6 joint positions + 6 joint velocities
+nx: 12
+
+# Initial goal position in world frame [x, y, z] (metres)
+goal: [0.4, 0.2, 0.6]
+
+# End-effector body name in the Isaac Lab articulation
+ee_link_name: "wrist_3_link"
+
+# Cost weights
+weights:
+  ee_to_goal:     1.0   # penalise EE distance to goal
+  contact_force:  0.1   # soft penalty for large wrist contact forces (compliance)
+  joint_vel:      0.05  # regularise joint velocities (smooth, safe motion)
+
+# MPPI parameters — torque-space sampling
+mppi:
+  mppi_mode: "halton-spline"
+  sampling_method: "halton"
+  num_samples: 750
+  horizon: 12
+  device: "cuda:0"
+  u_min: [-80.0]   # Nm — conservative limit shared across all joints
+  u_max: [80.0]
+  lambda_: 0.1
+  noise_sigma:
+    # Shoulder joints tolerate larger torque excursions than wrists
+    - [5.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    - [0.0, 5.0, 0.0, 0.0, 0.0, 0.0]
+    - [0.0, 0.0, 5.0, 0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0, 2.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0, 0.0, 2.0, 0.0]
+    - [0.0, 0.0, 0.0, 0.0, 0.0, 2.0]
+  rollout_var_discount: 0.95
+  update_cov: false
+  sample_null_action: true
+  filter_u: true
+  use_priors: false
+  seed_val: 0
+
+# Isaac Lab physics parameters
+isaaclab:
+  dt: 0.016667    # 1/60 s
+  visualize_rollouts: true

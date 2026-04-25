@@ -1,0 +1,502 @@
+<?xml version="1.0" ?>
+<!-- =================================================================================== -->
+<!-- |    UR16e with TetraGrip 4-finger gripper                                        | -->
+<!-- |    Based on ur16e.urdf with gripper from ur5e.xml MuJoCo model                  | -->
+<!-- =================================================================================== -->
+<robot name="ur16e_tetragrip">
+  <!-- ===================== Transmissions (arm) ===================== -->
+  <transmission name="shoulder_pan_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="shoulder_pan_joint">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="shoulder_pan_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="shoulder_lift_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="shoulder_lift_joint">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="shoulder_lift_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="elbow_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="elbow_joint">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="elbow_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="wrist_1_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="wrist_1_joint">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="wrist_1_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="wrist_2_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="wrist_2_joint">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="wrist_2_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="wrist_3_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="wrist_3_joint">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="wrist_3_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <!-- ===================== Transmissions (gripper sliders) ===================== -->
+  <transmission name="slider_0_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="Slider_0">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="slider_0_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="slider_1_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="Slider_1">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="slider_1_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="slider_2_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="Slider_2">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="slider_2_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+  <transmission name="slider_3_trans">
+    <type>transmission_interface/SimpleTransmission</type>
+    <joint name="Slider_3">
+      <hardwareInterface>hardware_interface/PositionJointInterface</hardwareInterface>
+    </joint>
+    <actuator name="slider_3_motor">
+      <mechanicalReduction>1</mechanicalReduction>
+    </actuator>
+  </transmission>
+
+  <!-- ===================== Links: UR16e arm ===================== -->
+  <link name="base_link"/>
+  <link name="base_link_inertia">
+    <visual>
+      <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/visual/base.dae"/>
+      </geometry>
+      <material name="LightGrey">
+        <color rgba="0.7 0.7 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/collision/base.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="4.0"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0.0061063308908" ixy="0.0" ixz="0.0" iyy="0.0061063308908" iyz="0.0" izz="0.01125"/>
+    </inertial>
+  </link>
+  <link name="shoulder_link">
+    <visual>
+      <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/visual/shoulder.dae"/>
+      </geometry>
+      <material name="LightGrey">
+        <color rgba="0.7 0.7 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/collision/shoulder.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="7.369"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0.029819260655624295" ixy="0.0" ixz="0.0" iyy="0.029819260655624295" iyz="0.0" izz="0.020725312499999995"/>
+    </inertial>
+  </link>
+  <link name="upper_arm_link">
+    <visual>
+      <origin rpy="1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0.176"/>
+      <geometry>
+        <mesh filename="../meshes/ur16e/visual/upperarm.dae"/>
+      </geometry>
+      <material name="LightGrey">
+        <color rgba="0.7 0.7 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0.176"/>
+      <geometry>
+        <mesh filename="../meshes/ur16e/collision/upperarm.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="10.45"/>
+      <origin rpy="0 1.5707963267948966 0" xyz="-0.2392 0.0 0.175"/>
+      <inertia ixx="0.21399985623335657" ixy="0.0" ixz="0.0" iyy="0.21399985623335657" iyz="0.0" izz="0.029390624999999997"/>
+    </inertial>
+  </link>
+  <link name="forearm_link">
+    <visual>
+      <origin rpy="1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0.04"/>
+      <geometry>
+        <mesh filename="../meshes/ur16e/visual/forearm.dae"/>
+      </geometry>
+      <material name="LightGrey">
+        <color rgba="0.7 0.7 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="1.5707963267948966 0 -1.5707963267948966" xyz="0 0 0.04"/>
+      <geometry>
+        <mesh filename="../meshes/ur16e/collision/forearm.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="4.321"/>
+      <origin rpy="0 1.5707963267948966 0" xyz="-0.18 0.0 0.04"/>
+      <inertia ixx="0.052743185152717496" ixy="0.0" ixz="0.0" iyy="0.052743185152717496" iyz="0.0" izz="0.012152812499999997"/>
+    </inertial>
+  </link>
+  <link name="wrist_1_link">
+    <visual>
+      <origin rpy="1.5707963267948966 0 0" xyz="0 0 -0.135"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/visual/wrist1.dae"/>
+      </geometry>
+      <material name="LightGrey">
+        <color rgba="0.7 0.7 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="1.5707963267948966 0 0" xyz="0 0 -0.135"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/collision/wrist1.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="2.18"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0.0056816227273499996" ixy="0.0" ixz="0.0" iyy="0.0056816227273499996" iyz="0.0" izz="0.00613125"/>
+    </inertial>
+  </link>
+  <link name="wrist_2_link">
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 -0.12"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/visual/wrist2.dae"/>
+      </geometry>
+      <material name="LightGrey">
+        <color rgba="0.7 0.7 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 -0.12"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/collision/wrist2.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="2.033"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <inertia ixx="0.0052985041305975" ixy="0.0" ixz="0.0" iyy="0.0052985041305975" iyz="0.0" izz="0.0057178125"/>
+    </inertial>
+  </link>
+  <link name="wrist_3_link">
+    <visual>
+      <origin rpy="1.5707963267948966 0 0" xyz="0 0 -0.1168"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/visual/wrist3.dae"/>
+      </geometry>
+      <material name="LightGrey">
+        <color rgba="0.7 0.7 0.7 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="1.5707963267948966 0 0" xyz="0 0 -0.1168"/>
+      <geometry>
+        <mesh filename="../meshes/ur10e/collision/wrist3.stl"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.907"/>
+      <origin rpy="0 0 0" xyz="0.0 0.0 -0.025"/>
+      <inertia ixx="0.0006481268240825001" ixy="0.0" ixz="0.0" iyy="0.0006481268240825001" iyz="0.0" izz="0.0009183374999999999"/>
+    </inertial>
+  </link>
+
+  <!-- ===================== Joints: UR16e arm ===================== -->
+  <joint name="base_link-base_link_inertia" type="fixed">
+    <parent link="base_link"/>
+    <child link="base_link_inertia"/>
+    <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
+  </joint>
+  <joint name="shoulder_pan_joint" type="revolute">
+    <parent link="base_link_inertia"/>
+    <child link="shoulder_link"/>
+    <origin rpy="0 0 0" xyz="0 0 0.1807"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="330.0" lower="-6.283185307179586" upper="6.283185307179586" velocity="2.0943951023931953"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+  <joint name="shoulder_lift_joint" type="revolute">
+    <parent link="shoulder_link"/>
+    <child link="upper_arm_link"/>
+    <origin rpy="1.570796327 0 0" xyz="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="330.0" lower="-6.283185307179586" upper="6.283185307179586" velocity="2.0943951023931953"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+  <joint name="elbow_joint" type="revolute">
+    <parent link="upper_arm_link"/>
+    <child link="forearm_link"/>
+    <origin rpy="0 0 0" xyz="-0.4784 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="150.0" lower="-3.141592653589793" upper="3.141592653589793" velocity="3.141592653589793"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+  <joint name="wrist_1_joint" type="revolute">
+    <parent link="forearm_link"/>
+    <child link="wrist_1_link"/>
+    <origin rpy="0 0 0" xyz="-0.36 0 0.17415"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="56.0" lower="-6.283185307179586" upper="6.283185307179586" velocity="3.141592653589793"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+  <joint name="wrist_2_joint" type="revolute">
+    <parent link="wrist_1_link"/>
+    <child link="wrist_2_link"/>
+    <origin rpy="1.570796327 0 0" xyz="0 -0.11985 -2.458164590756244e-11"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="56.0" lower="-6.283185307179586" upper="6.283185307179586" velocity="3.141592653589793"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+  <joint name="wrist_3_joint" type="revolute">
+    <parent link="wrist_2_link"/>
+    <child link="wrist_3_link"/>
+    <origin rpy="1.570796326589793 3.141592653589793 3.141592653589793" xyz="0 0.11655 -2.390480459346185e-11"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="56.0" lower="-6.283185307179586" upper="6.283185307179586" velocity="3.141592653589793"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+
+  <!-- ROS-Industrial 'base' frame -->
+  <link name="base"/>
+  <joint name="base_link-base_fixed_joint" type="fixed">
+    <origin rpy="0 0 3.141592653589793" xyz="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="base"/>
+  </joint>
+
+  <!-- ROS-Industrial 'flange' frame -->
+  <link name="flange"/>
+  <joint name="wrist_3-flange" type="fixed">
+    <parent link="wrist_3_link"/>
+    <child link="flange"/>
+    <origin rpy="0 -1.5707963267948966 -1.5707963267948966" xyz="0 0 0"/>
+  </joint>
+
+  <!-- tool0: EE reference frame (no geometry, just a frame) -->
+  <link name="tool0"/>
+  <joint name="flange-tool0" type="fixed">
+    <origin rpy="1.5707963267948966 0 1.5707963267948966" xyz="0 0 0"/>
+    <parent link="flange"/>
+    <child link="tool0"/>
+  </joint>
+
+  <!-- ===================== TetraGrip 4-finger gripper ===================== -->
+  <!-- Gripper body: fixed to tool0 (EE flange face) -->
+  <link name="gripper_body_link">
+    <visual>
+      <!-- From MuJoCo: pos="0 0 0.10000796" quat="0.707 0.707 0 0" (Rx 90deg) -->
+      <origin xyz="0 0 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <mesh filename="../../universal_robots_ur5e/assets/meshes/gripper_mod_01_Simp_suction_array_Simp_suction_array_Body_Body.obj"/>
+      </geometry>
+      <material name="gripper_grey">
+        <color rgba="0.5 0.5 0.5 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <!-- <box size="0.06 0.04 0.02"/> -->
+        <cylinder radius="0.04" length="0.15"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.5"/>
+      <origin xyz="0 0 0.05" rpy="0 0 0"/>
+      <inertia ixx="1e-3" iyy="1e-3" izz="1e-3" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <joint name="tool0-gripper_body" type="fixed">
+    <parent link="tool0"/>
+    <child link="gripper_body_link"/>
+    <origin xyz="0 0 0.075" rpy="0 0 0"/>
+  </joint>
+
+  <!-- === Finger 0 === -->
+  <link name="finger_0_link">
+    <visual>
+      <origin xyz="-0.03 -0.03 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <mesh filename="../../universal_robots_ur5e/assets/meshes/Finger_0.obj"/>
+      </geometry>
+      <material name="finger_dark">
+        <color rgba="0.2 0.2 0.2 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+      <geometry>
+        <!-- <box size="0.02 0.024 0.024"/> -->
+        <cylinder radius="0.012" length="0.17"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="1e-5" iyy="1e-5" izz="1e-5" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <joint name="Slider_0" type="prismatic">
+    <parent link="gripper_body_link"/>
+    <child link="finger_0_link"/>
+    <!-- <origin xyz="0.03 0.03 0.0" rpy="0 0 0"/> -->
+    <origin xyz="0.03 0.03 0.0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="0.085" effort="100" velocity="3.0"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+
+  <!-- === Finger 1 === -->
+  <link name="finger_1_link">
+    <visual>
+      <origin xyz="-0.03 0.03 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <mesh filename="../../universal_robots_ur5e/assets/meshes/Finger_1.obj"/>
+      </geometry>
+      <material name="finger_dark">
+        <color rgba="0.2 0.2 0.2 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <!-- <box size="0.02 0.024 0.024"/> -->
+        <cylinder radius="0.012" length="0.17"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="1e-5" iyy="1e-5" izz="1e-5" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <joint name="Slider_1" type="prismatic">
+    <parent link="gripper_body_link"/>
+    <child link="finger_1_link"/>
+    <origin xyz="0.03 -0.03 0.0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="0.085" effort="100" velocity="3.0"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+
+  <!-- === Finger 2 === -->
+  <link name="finger_2_link">
+    <visual>
+      <origin xyz="0.03 0.03 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <mesh filename="../../universal_robots_ur5e/assets/meshes/Finger_2.obj"/>
+      </geometry>
+      <material name="finger_dark">
+        <color rgba="0.2 0.2 0.2 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <!-- <box size="0.02 0.024 0.024"/> -->
+        <cylinder radius="0.012" length="0.17"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="1e-5" iyy="1e-5" izz="1e-5" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <joint name="Slider_2" type="prismatic">
+    <parent link="gripper_body_link"/>
+    <child link="finger_2_link"/>
+    <origin xyz="-0.03 -0.03 0.0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="0.085" effort="100" velocity="3.0"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+
+  <!-- === Finger 3 === -->
+  <link name="finger_3_link">
+    <visual>
+      <origin xyz="0.03 -0.03 0" rpy="1.5707963267948966 0 0"/>
+      <geometry>
+        <mesh filename="../../universal_robots_ur5e/assets/meshes/Finger_3.obj"/>
+      </geometry>
+      <material name="finger_dark">
+        <color rgba="0.2 0.2 0.2 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <!-- <box size="0.02 0.024 0.024"/> -->
+        <cylinder radius="0.012" length="0.17"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.05"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="1e-5" iyy="1e-5" izz="1e-5" ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </link>
+  <joint name="Slider_3" type="prismatic">
+    <parent link="gripper_body_link"/>
+    <child link="finger_3_link"/>
+    <origin xyz="-0.03 0.03 0.0" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="0" upper="0.085" effort="100" velocity="3.0"/>
+    <dynamics damping="5.0" friction="0.1"/>
+  </joint>
+
+</robot>

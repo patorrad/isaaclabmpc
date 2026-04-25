@@ -1,0 +1,57 @@
+# Configuration for ur16e_push example
+# Robot pushes a box to a goal position using MPPI
+
+n_steps: 10000
+
+# State dimension: 6 joint positions + 6 joint velocities
+nx: 12
+
+# Initial goal position in local env frame [x, y, z]
+goal: [0.0, 0.6, 0.025]
+
+# End-effector body name
+ee_link_name: "wrist_3_link"
+
+# MPPI parameters
+mppi:
+  mppi_mode: "halton-spline"
+  sampling_method: "halton"
+  num_samples: 750
+  horizon: 12
+  device: "cuda:0"
+  u_min: [-0.5]
+  u_max: [0.5]
+  lambda_: 0.1
+  noise_sigma:
+    - [0.01, 0.0,  0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.01, 0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.01, 0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.0,  0.01, 0.0,  0.0]
+    - [0.0,  0.0,  0.0,  0.0,  0.01, 0.0]
+    - [0.0,  0.0,  0.0,  0.0,  0.0,  0.01]
+  rollout_var_discount: 0.95
+  update_cov: false
+  sample_null_action: true
+  filter_u: true
+  use_priors: false
+  seed_val: 0
+
+# Isaac Lab physics parameters
+isaaclab:
+  dt: 0.016667    # 1/60 s
+  visualize_rollouts: true
+
+# Objects in the scene (first one is the push target)
+boxes:
+  - init_pos: [0., 0.2, 0.025]
+    size: [0.05, 0.05, 0.05]
+    mass: 1.0
+  - init_pos: [0.05, 0.25, 0.025]
+    size: [0.05, 0.05, 0.05]
+    mass: 1.0
+  - init_pos: [-0.05, 0.25, 0.025]
+    size: [0.05, 0.05, 0.05]
+    mass: 1.0
+  - init_pos: [0., 0.3, 0.025]
+    size: [0.05, 0.05, 0.05]
+    mass: 0.2

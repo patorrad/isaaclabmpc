@@ -1,0 +1,56 @@
+n_steps: 20000
+nx: 12
+ee_link_name: wrist_3_link
+step_threshold: 0.04
+
+# MPPI parameters
+mppi:
+  mppi_mode: "halton-spline"
+  sampling_method: "halton"
+  num_samples: 750
+  horizon: 12
+  device: "cuda:0"
+  u_min: [-0.5]
+  u_max: [0.5]
+  lambda_: 0.1
+  noise_sigma:
+    - [0.01, 0.0,  0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.01, 0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.01, 0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.0,  0.01, 0.0,  0.0]
+    - [0.0,  0.0,  0.0,  0.0,  0.01, 0.0]
+    - [0.0,  0.0,  0.0,  0.0,  0.0,  0.01]
+  rollout_var_discount: 0.95
+  update_cov: false
+  sample_null_action: true
+  filter_u: true
+  use_priors: false
+  seed_val: 0
+
+# Four boxes in the scene.  Steps reference them by index (0-based).
+boxes:
+  - size: [0.05, 0.05, 0.05]
+    mass: 0.5
+    init_pos: [0.4, 0.2, 0.025]
+  - size: [0.05, 0.05, 0.05]
+    mass: 0.5
+    init_pos: [0.4, -0.2, 0.025]
+  - size: [0.05, 0.05, 0.05]
+    mass: 0.5
+    init_pos: [0.3, 0.0, 0.025]
+  - size: [0.05, 0.05, 0.05]
+    mass: 1.0
+    init_pos: [0.5, 0.1, 0.025]
+
+# Sequential push steps: push each named box to its goal in order.
+steps:
+  - obj_idx: 0
+    end_pos: [0.6, 0.3, 0.025]
+  - obj_idx: 1
+    end_pos: [0.6, -0.3, 0.025]
+  - obj_idx: 2
+    end_pos: [0.6, 0.0, 0.025]
+
+isaaclab:
+  dt: 0.016666666666666666
+  visualize_rollouts: true
