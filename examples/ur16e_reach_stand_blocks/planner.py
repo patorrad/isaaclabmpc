@@ -74,7 +74,7 @@ class PlannerConfig:
     nx: int = 12
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
-    solution_path: str = "/home/paolo/Documents/puzzle/solution_obs_3_simple_extraction_robot.json"
+    solution_path: str = "solution_obs_3_simple_extraction_robot.json"
     step_threshold: float = 0.04
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
