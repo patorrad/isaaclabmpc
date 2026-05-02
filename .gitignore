@@ -1,0 +1,10 @@
+
+*.gif
+*.mp4
+*.csv
+*.png
+
+*.npy
+*.pyc
+
+**/outputs/

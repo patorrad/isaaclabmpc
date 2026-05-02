@@ -53,6 +53,7 @@ import sys
 import time
 import threading
 
+import json
 import torch
 import yaml
 import zerorpc
@@ -66,7 +67,7 @@ if _PROJECT_ROOT not in sys.path:
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from robots.ur16e import UR16E_CFG
-from examples.ur16e_reach_stand.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_reach_stand_blocks_copy.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -83,6 +84,7 @@ class WorldConfig:
     n_steps: int = 100000
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
+    solution_path: str = ""
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
 
 
@@ -93,6 +95,7 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.n_steps = raw.get("n_steps", cfg.n_steps)
     cfg.goal = raw.get("goal", cfg.goal)
     cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.solution_path = raw.get("solution_path", cfg.solution_path)
     if "isaaclab" in raw:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
@@ -253,6 +256,11 @@ def main():
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
     cfg.n_steps = args_cli.n_steps
+
+    solution_steps = []
+    if cfg.solution_path:
+        with open(cfg.solution_path) as f:
+            solution_steps = json.load(f)["steps"]
     headless = getattr(args_cli, "headless", False)
     n_rollouts_draw = 0 if headless else args_cli.n_rollouts_draw
 
@@ -316,12 +324,19 @@ def main():
         with world._goal_lock:
             goal_now = world._goal.clone()
         planner.set_goal(torch_to_bytes(goal_now.cpu()))
-        print(goal_now)
 
         # ------------------------------------------------------------------
         # 2. Call MPPI planner — returns optimal joint-velocity command
+        #    Append block states [pos(3), quat(4)] × 4 so the planner can
+        #    reset parallel envs to the current real block positions.
         # ------------------------------------------------------------------
-        dof_state = torch.cat([q, dq]).cpu()
+        block_states = []
+        for i in range(len(world.objects)):
+            pos  = world.get_object_pos(i)[0]   # (3,)
+            quat = world.get_object_quat(i)[0]  # (4,) w,x,y,z
+            block_states.append(pos)
+            block_states.append(quat)
+        dof_state = torch.cat([q, dq] + block_states)
         u_bytes = planner.compute_action_tensor(torch_to_bytes(dof_state), b"")
         u = bytes_to_torch(u_bytes).to(device)   # (DOF,)
 
@@ -348,23 +363,32 @@ def main():
         ee_pos = world.get_ee_pos()[0]            # (3,) local frame
 
         # ------------------------------------------------------------------
-        # 6. Logging
+        # 6. Logging — TCP tip position + distance to current target block
         # ------------------------------------------------------------------
-        dist = torch.linalg.norm(ee_pos - goal_now).item()
-        ee_pos  = world.get_ee_pos()   # (num_envs, 3)
-        ee_quat = world.get_ee_quat()  # (num_envs, 4)
-        goal    = world.get_goal()     # (3,)
+        ee_quat = world.get_ee_quat()[0].cpu()
+        tcp_offset_world = _quat_apply(ee_quat, tcp_offset_local)
+        tcp_pos = ee_pos.cpu() + tcp_offset_world
 
-        tcp_pos = ee_pos + _quat_apply(ee_quat, tcp_offset_local)  # (num_envs, 3)
+        step_label = ""
+        dist_label = ""
+        try:
+            cur_step  = int(bytes_to_torch(planner.get_current_step()).item())
+            tot_steps = int(bytes_to_torch(planner.get_total_steps()).item())
+            step_label = f"step {cur_step}/{tot_steps}"
+            if solution_steps and cur_step < len(solution_steps):
+                obj_idx  = solution_steps[cur_step]["obj_idx"]
+                blk_pos  = world.get_object_pos(obj_idx)[0].cpu()
+                dist     = torch.linalg.norm(tcp_pos - blk_pos).item()
+                dist_label = f"d2blk {dist:.3f}m"
+        except Exception:
+            pass
 
-        dist = torch.linalg.norm(tcp_pos - goal.unsqueeze(0), dim=1, ord=1)
         elapsed = time.time() - t_prev
         t_prev = time.time()
         print(
-            # f"\r[{step:05d}] "
-            # f"EE [{ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}]  "
-            # f"goal [{goal_now[0]:.2f}, {goal_now[1]:.2f}, {goal_now[2]:.2f}]  "
-            f"dist {dist[0].item():.4f} m  "
+            f"\r[{step:05d}] "
+            f"TCP [{tcp_pos[0]:.3f}, {tcp_pos[1]:.3f}, {tcp_pos[2]:.3f}]  "
+            f"{step_label}  {dist_label}  "
             f"{elapsed*1000:.0f} ms/step",
             end="",
             flush=True,

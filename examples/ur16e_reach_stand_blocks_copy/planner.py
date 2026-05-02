@@ -56,8 +56,8 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
+from robots.ur16e import UR16E_CFG
+from examples.ur16e_reach_stand_blocks_copy.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -78,8 +78,6 @@ class PlannerConfig:
     ee_link_name: str = "wrist_3_link"
     solution_path: str = "solution_obs_3_simple_extraction_robot.json"
     step_threshold: float = 0.04
-    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
-    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
 
@@ -95,8 +93,6 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.ee_link_name    = raw.get("ee_link_name",    cfg.ee_link_name)
     cfg.solution_path   = raw.get("solution_path",   cfg.solution_path)
     cfg.step_threshold  = raw.get("step_threshold",  cfg.step_threshold)
-    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
-    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
 
     if "mppi" in raw:
         cfg.mppi = MPPIConfig(**{k: v for k, v in raw["mppi"].items()})
@@ -166,25 +162,27 @@ class Objective:
 
     def __init__(self, cfg: PlannerConfig):
         self.weights = {
-            # "robot_to_obj": 30.0,
-            # "obj_to_goal":  40.0,
-            # "robot_ori":    10.0,
-            # "push_align":   20.0,
-            # "height_match": 20.0,
-            # "collision":     2.0,
-            # "robot_to_obj": 30.0,
-            # "obj_to_goal":  40.0,
-            # "robot_ori":     15.0,
-            # "height_match": 20.0,
-            # "push_align":   40.0,
-            # "collision":     1.0,
-            "robot_to_obj":  5.0,
-            "obj_to_goal":   25.0,
-            "robot_ori":      5.0,
-            "height_match":  40.0,
-            "push_align":    45.0,
-            "collision":      .0,
+        #     "robot_to_obj": 30.0,
+        #     "obj_to_goal":  40.0,
+        #     "robot_ori":     15.0,
+        #     "height_match": 25.0,
+        #     "push_align":   40.0,
+        #     "collision":    1.0,
+        # }
+            "robot_to_obj": 25.0,
+            "obj_to_goal":  25.0,
+            "robot_ori":     25.0,
+            "height_match": 25.0,
+            "push_align":   45.0,
+            "collision":     10.0,
         }
+
+            # "robot_to_block": 15.0,
+            # "block_to_goal":  25.0,
+            # "robot_ori":      25.0,
+            # "block_height":   20.0,
+            # "push_align":     45.0,
+        
         self.step_threshold = cfg.step_threshold
 
         with open(cfg.solution_path) as f:
@@ -226,13 +224,13 @@ class Objective:
     def compute_cost(self, sim) -> torch.Tensor:
         device = sim.device
 
-        # if not self._printed_initial_poses:
-        #     print("[Objective] Initial object poses in simulation (env 0):")
-        #     for i in range(len(self.steps)):
-        #         obj_idx = self.steps[i]["obj_idx"]
-        #         pos = sim.get_object_pos(obj_idx)[0].tolist()
-        #         print(f"  {self.steps[i]['obj_name']} (idx {obj_idx}): {[round(v,4) for v in pos]}")
-        #     self._printed_initial_poses = True
+        if not self._printed_initial_poses:
+            print("[Objective] Initial object poses in simulation (env 0):")
+            for i in range(len(self.steps)):
+                obj_idx = self.steps[i]["obj_idx"]
+                pos = sim.get_object_pos(obj_idx)[0].tolist()
+                print(f"  {self.steps[i]['obj_name']} (idx {obj_idx}): {[round(v,4) for v in pos]}")
+            self._printed_initial_poses = False
         # [Objective] Initial object poses in simulation (env 0):
         #             obstacle_2 (idx 3): [0.6095, -0.0735, 0.595]
         #             obstacle_0 (idx 1): [0.4825, 0.0874, 0.595]
@@ -314,11 +312,10 @@ def main():
         debug_vis=False,
     )
 
-    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
-    robot_cfg = _base_robot_cfg.replace(
-        spawn=_base_robot_cfg.spawn.replace(
+    robot_cfg = UR16E_CFG.replace(
+        spawn=UR16E_CFG.spawn.replace(
             rigid_props=RigidBodyPropertiesCfg(
-                disable_gravity=True,
+                disable_gravity=False,
                 max_depenetration_velocity=5.0,
                 enable_gyroscopic_forces=True,
             ),

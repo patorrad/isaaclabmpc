@@ -193,7 +193,7 @@ def main():
 
     GoalController(world._goal, world._goal_lock)
 
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.14])
+    tcp_offset_local = torch.tensor([0.0, 0.0, 0.12])
     vis = RolloutVisualiser(tcp_offset_local)
 
     # ------------------------------------------------------------------
@@ -226,8 +226,20 @@ def main():
         dq = dof_state[DOF:DOF * 2] if dof_state.numel() > DOF else zeros
 
         # ------------------------------------------------------------------
-        # 2. Mirror joint state in the viewer (no velocity commands)
+        # 2. Mirror joint state + block positions in the viewer
         # ------------------------------------------------------------------
+        try:
+            obj_bytes = planner.get_object_states()
+            obj_data  = bytes_to_torch(obj_bytes)
+            if obj_data.numel() >= 7:
+                n = obj_data.numel() // 7
+                for i in range(min(n, len(world.objects))):
+                    pos  = obj_data[i * 7:     i * 7 + 3].to(device)
+                    quat = obj_data[i * 7 + 3: i * 7 + 7].to(device)
+                    world._reset_object(world.objects[i], pos, quat)
+        except Exception:
+            pass
+
         q_exp  = q.view(1, DOF).expand(world.num_envs, -1).contiguous()
         dq_exp = dq.view(1, DOF).expand(world.num_envs, -1).contiguous()
         world.robot.write_joint_state_to_sim(q_exp, dq_exp)

@@ -38,6 +38,36 @@ UR16E_URDF_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "ur16e.urdf"))
 # ---------------------------------------------------------------------------
 # ArticulationCfg
 # ---------------------------------------------------------------------------
+JOINT_NAMES = [
+    "shoulder_pan_joint",
+    "shoulder_lift_joint",
+    "elbow_joint",
+    "wrist_1_joint",
+    "wrist_2_joint",
+    "wrist_3_joint",
+]
+
+
+def make_ur16e_cfg(pos=(0.208, 0.0, 2.075), rot=(0, 1, 0, 0), joint_pos=None):
+    """Return an ArticulationCfg with the robot base and joints at the given state.
+
+    Args:
+        pos:       World-frame position of the robot base [x, y, z].
+        rot:       World-frame rotation of the robot base as quaternion [w, x, y, z].
+        joint_pos: List of 6 joint angles [rad] in JOINT_NAMES order.
+                   If None, the defaults from UR16E_CFG are kept.
+    """
+    jp = None
+    if joint_pos is not None:
+        jp = dict(zip(JOINT_NAMES, joint_pos))
+
+    new_init = UR16E_CFG.init_state.replace(pos=tuple(pos), rot=tuple(rot))
+    if jp is not None:
+        new_init = new_init.replace(joint_pos=jp)
+
+    return UR16E_CFG.replace(init_state=new_init)
+
+
 UR16E_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
         asset_path=UR16E_URDF_PATH,
@@ -70,14 +100,14 @@ UR16E_CFG = ArticulationCfg(
     init_state=ArticulationCfg.InitialStateCfg(
         # Home configuration (arm pointing upward, clear of singularities)
         joint_pos={ #-1.8730, -2.2557,  1.0872,  5.4254,  2.0986, -0.5222
-            "shoulder_pan_joint": -1.5708,
+            "shoulder_pan_joint": 0.549, #-1.5708, #
             "shoulder_lift_joint": -2.2557, #-2.0977, #-1.5708,   # -90°
             "elbow_joint":         1.0872, #1.5708,    # +90°
             "wrist_1_joint":      0.8265, #-1.5708,    # -90°
             "wrist_2_joint":      1.5802, #-1.5708,    # -90°
             "wrist_3_joint":       0.5275, #0.0,
         },
-        pos=(0.208, 0.0, 1.867), # (0., -0., 1.2),
+        pos=(0.208, 0.0, 2.075), #(0., -0., 1.2),
         rot=(0, 1, 0, 0)
     ),
     actuators={
@@ -88,7 +118,7 @@ UR16E_CFG = ArticulationCfg(
             effort_limit_sim=330.0,
             velocity_limit_sim=3.14,          # ~180 deg/s
             stiffness=0.0,                    # no position tracking
-            damping=200.0,                    # velocity-tracking gain
+            damping=100.0,                    # velocity-tracking gain
         ),
     },
 )

@@ -69,7 +69,7 @@ if _PROJECT_ROOT not in sys.path:
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from robots.ur16e import UR16E_CFG
-from examples.ur16e_reach_stand.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
 
 # ===========================================================================
 # 3. Keyboard goal control
@@ -185,15 +185,15 @@ def main():
         robot_cfg=UR16E_CFG,
         num_envs=1,
         ee_link_name="wrist_3_link",
-        goal=[0.40, 0.10, 0.92],
-        # object_cfgs=make_block_cfgs(),
+        goal=[0.4, 0.2, 0.6],
+        object_cfgs=make_block_cfgs(),
         static_cfgs=make_static_cfgs(),
     )
     device = world.device
 
     GoalController(world._goal, world._goal_lock)
 
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.12])
+    tcp_offset_local = torch.tensor([0.0, 0.0, 0.14])
     vis = RolloutVisualiser(tcp_offset_local)
 
     # ------------------------------------------------------------------
@@ -257,25 +257,22 @@ def main():
         # 5. Logging
         # ------------------------------------------------------------------
         ee_pos = world.get_ee_pos()[0]
-        tcp_offset_world = _quat_apply(world.get_ee_quat()[0].cpu(),
-                                        tcp_offset_local)
+        tcp_offset_world = _quat_apply(world.get_ee_quat()[0].cpu(), tcp_offset_local)
         tcp_pos = ee_pos.cpu() + tcp_offset_world
-        dist = torch.linalg.norm(tcp_pos - goal_now.cpu()).item()
+
+        try:
+            cur_step   = int(bytes_to_torch(planner.get_current_step()).item())
+            tot_steps  = int(bytes_to_torch(planner.get_total_steps()).item())
+            step_label = f"step {cur_step}/{tot_steps}"
+        except Exception:
+            step_label = ""
+
         elapsed = time.time() - t_prev
         t_prev = time.time()
-
-        ee_pos  = world.get_ee_pos()   # (num_envs, 3)
-        ee_quat = world.get_ee_quat()  # (num_envs, 4)
-        goal    = world.get_goal()     # (3,)
-
-        tcp_pos = ee_pos + _quat_apply(ee_quat, tcp_offset_local)  # (num_envs, 3)
-
-        dist = torch.linalg.norm(tcp_pos - goal.unsqueeze(0), dim=1, ord=1)
         print(
-            # f"\r[{step:06d}] "
-            # f"TCP [{tcp_pos[0]:.3f}, {tcp_pos[1]:.3f}, {tcp_pos[2]:.3f}]  "
-            # f"goal [{goal_now[0]:.2f}, {goal_now[1]:.2f}, {goal_now[2]:.2f}]  "
-            f"\rdist {dist[0].item():.4f} m  "
+            f"\r[{step:06d}] "
+            f"TCP [{tcp_pos[0]:.3f}, {tcp_pos[1]:.3f}, {tcp_pos[2]:.3f}]  "
+            f"{step_label}  "
             f"{elapsed*1000:.0f} ms/step",
             end="",
             flush=True,

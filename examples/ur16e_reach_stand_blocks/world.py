@@ -63,9 +63,10 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from robots.ur16e import UR16E_CFG
+from robots.ur16e import make_ur16e_cfg
 from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
 
 
@@ -84,6 +85,8 @@ class WorldConfig:
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
+    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
+    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
 
 
 def _load_config(yaml_path: str) -> WorldConfig:
@@ -93,6 +96,9 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.n_steps = raw.get("n_steps", cfg.n_steps)
     cfg.goal = raw.get("goal", cfg.goal)
     cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
+    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+
     if "isaaclab" in raw:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
@@ -237,6 +243,7 @@ class RolloutVisualiser:
         # local → world, then shift to TCP tip
         rollouts = rollouts.permute(1, 0, 2).cpu() + origin + tcp_offset_world  # (num_envs, H, 3)
         num_envs = rollouts.shape[0]
+        print(rollouts[0, 0, :])
         stride = max(1, num_envs // n_draw)
         rollouts_sub = rollouts[::stride]
 
@@ -256,6 +263,18 @@ def main():
     headless = getattr(args_cli, "headless", False)
     n_rollouts_draw = 0 if headless else args_cli.n_rollouts_draw
 
+    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
+    robot_cfg = _base_robot_cfg.replace(
+        spawn=_base_robot_cfg.spawn.replace(
+            rigid_props=RigidBodyPropertiesCfg(
+                disable_gravity=True,
+                max_depenetration_velocity=5.0,
+                enable_gyroscopic_forces=True,
+            ),
+            activate_contact_sensors=True,
+        )
+    )
+
     # ------------------------------------------------------------------
     # World simulation: single env, rendered
     # ------------------------------------------------------------------
@@ -265,7 +284,7 @@ def main():
             device="cuda:0",
             render=not headless,
         ),
-        robot_cfg=UR16E_CFG,
+        robot_cfg=robot_cfg,
         num_envs=1,
         ee_link_name=cfg.ee_link_name,
         goal=cfg.goal,
@@ -281,7 +300,7 @@ def main():
     # TCP offset: offset from wrist_3_link origin to tool tip in wrist_3_link frame.
     # tool0 +Z == wrist_3_link +Z (fixed joint chain has no translation, only rotation).
     # The pipe-nipple gripper cylinder extends 0.14 m along +Z.
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.14])
+    tcp_offset_local = torch.tensor([0.0, 0.0, 0.12])
 
     # Rollout visualiser (only when rendering)
     vis = RolloutVisualiser(tcp_offset_local) if not headless else None

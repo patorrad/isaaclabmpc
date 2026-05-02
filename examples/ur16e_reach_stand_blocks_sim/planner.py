@@ -52,11 +52,9 @@ if _PROJECT_ROOT not in sys.path:
 import json
 
 from mppi_torch.mppi import MPPIConfig
-from isaaclab.sensors import ContactSensorCfg
-from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import make_ur16e_cfg
+from robots.ur16e import UR16E_CFG
 from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
 
 
@@ -78,8 +76,6 @@ class PlannerConfig:
     ee_link_name: str = "wrist_3_link"
     solution_path: str = "solution_obs_3_simple_extraction_robot.json"
     step_threshold: float = 0.04
-    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
-    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
 
@@ -95,8 +91,6 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.ee_link_name    = raw.get("ee_link_name",    cfg.ee_link_name)
     cfg.solution_path   = raw.get("solution_path",   cfg.solution_path)
     cfg.step_threshold  = raw.get("step_threshold",  cfg.step_threshold)
-    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
-    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
 
     if "mppi" in raw:
         cfg.mppi = MPPIConfig(**{k: v for k, v in raw["mppi"].items()})
@@ -162,28 +156,15 @@ class Objective:
       push_align    — TCP is behind the block relative to the push direction
     """
 
-    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.12])
+    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.14])
 
     def __init__(self, cfg: PlannerConfig):
         self.weights = {
-            # "robot_to_obj": 30.0,
-            # "obj_to_goal":  40.0,
-            # "robot_ori":    10.0,
-            # "push_align":   20.0,
-            # "height_match": 20.0,
-            # "collision":     2.0,
-            # "robot_to_obj": 30.0,
-            # "obj_to_goal":  40.0,
-            # "robot_ori":     15.0,
-            # "height_match": 20.0,
-            # "push_align":   40.0,
-            # "collision":     1.0,
-            "robot_to_obj":  5.0,
-            "obj_to_goal":   25.0,
-            "robot_ori":      5.0,
-            "height_match":  40.0,
-            "push_align":    45.0,
-            "collision":      .0,
+            "robot_to_obj": 30.0,
+            "obj_to_goal":  40.0,
+            "robot_ori":    10.0,
+            "push_align":   20.0,
+            "height_match": 20.0,
         }
         self.step_threshold = cfg.step_threshold
 
@@ -194,18 +175,10 @@ class Objective:
         self.current_step = 0
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True
-        self._printed_initial_poses = False
 
         print(f"[Objective] Loaded {len(self.steps)} steps from {cfg.solution_path}")
         for i, step in enumerate(self.steps):
             print(f"  Step {i}: push {step['obj_name']} (idx {step['obj_idx']}) → {step['end_pos']}")
-
-        final_poses = {}
-        for step in self.steps:
-            final_poses[step['obj_name']] = (step['obj_idx'], step['end_pos'])
-        print("[Objective] Final object world poses:")
-        for name, (idx, pos) in final_poses.items():
-            print(f"  {name} (idx {idx}): {pos}")
 
     def reset(self):
         """Advance to next step if current block reached its goal."""
@@ -226,18 +199,6 @@ class Objective:
     def compute_cost(self, sim) -> torch.Tensor:
         device = sim.device
 
-        # if not self._printed_initial_poses:
-        #     print("[Objective] Initial object poses in simulation (env 0):")
-        #     for i in range(len(self.steps)):
-        #         obj_idx = self.steps[i]["obj_idx"]
-        #         pos = sim.get_object_pos(obj_idx)[0].tolist()
-        #         print(f"  {self.steps[i]['obj_name']} (idx {obj_idx}): {[round(v,4) for v in pos]}")
-        #     self._printed_initial_poses = True
-        # [Objective] Initial object poses in simulation (env 0):
-        #             obstacle_2 (idx 3): [0.6095, -0.0735, 0.595]
-        #             obstacle_0 (idx 1): [0.4825, 0.0874, 0.595]
-        #             target (idx 0): [0.6127, 0.0797, 0.595]
-        #             target (idx 0): [0.6127, 0.0797, 0.595]
         # TCP tip position
         ee_pos  = sim.get_ee_pos()   # (num_envs, 3)
         ee_quat = sim.get_ee_quat()  # (num_envs, 4)
@@ -282,20 +243,16 @@ class Objective:
             + 1.0
         )
 
-        forces    = sim.get_contact_forces(0)           # (num_envs, 1, 3)
-        collision = torch.abs(forces[:, 0, 2])          # Z component
-
         for t in (robot_to_obj_dist, obj_to_goal_dist, robot_ori,
-                  height_match, push_align, collision):
+                  height_match, push_align):
             t[torch.isnan(t)] = 100.0
 
         return (
             self.weights["robot_to_obj"] * robot_to_obj_dist
-            + self.weights["obj_to_goal"]  * obj_to_goal_dist
-            + self.weights["robot_ori"]    * robot_ori
-            + self.weights["push_align"]   * push_align
+            + self.weights["obj_to_goal"] * obj_to_goal_dist
+            + self.weights["robot_ori"]   * robot_ori
+            + self.weights["push_align"]  * push_align
             + self.weights["height_match"] * height_match
-            + self.weights["collision"]    * collision
         )
 
 
@@ -307,34 +264,14 @@ def main():
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
 
-    robot_contact_sensor = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
-        update_period=0.0,
-        history_length=0,
-        debug_vis=False,
-    )
-
-    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
-    robot_cfg = _base_robot_cfg.replace(
-        spawn=_base_robot_cfg.spawn.replace(
-            rigid_props=RigidBodyPropertiesCfg(
-                disable_gravity=True,
-                max_depenetration_velocity=5.0,
-                enable_gyroscopic_forces=True,
-            ),
-            activate_contact_sensors=True,
-        )
-    )
-
     objective = Objective(cfg)
     planner = MPPIIsaacLabPlanner(
         cfg,
         objective,
-        robot_cfg=robot_cfg,
+        robot_cfg=UR16E_CFG,
         prior=None,
         object_cfgs=make_block_cfgs(),
         static_cfgs=make_static_cfgs(),
-        contact_sensor_cfgs=[robot_contact_sensor],
     )
 
     server = zerorpc.Server(planner)

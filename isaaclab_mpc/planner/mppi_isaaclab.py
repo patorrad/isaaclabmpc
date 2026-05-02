@@ -15,7 +15,8 @@ Architecture
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+import math
+from typing import Callable, List, Optional
 
 import torch
 
@@ -23,6 +24,20 @@ from mppi_torch.mppi import MPPIPlanner
 
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
+
+
+def _euler_xyz_to_quat_wxyz(euler_xyz) -> torch.Tensor:
+    """Convert intrinsic XYZ Euler angles (radians) to wxyz quaternion."""
+    ex, ey, ez = float(euler_xyz[0]), float(euler_xyz[1]), float(euler_xyz[2])
+    cx, sx = math.cos(ex / 2), math.sin(ex / 2)
+    cy, sy = math.cos(ey / 2), math.sin(ey / 2)
+    cz, sz = math.cos(ez / 2), math.sin(ez / 2)
+    return torch.tensor([
+        cx * cy * cz + sx * sy * sz,
+        sx * cy * cz - cx * sy * sz,
+        cx * sy * cz + sx * cy * sz,
+        cx * cy * sz - sx * sy * cz,
+    ], dtype=torch.float32)
 
 
 class MPPIIsaacLabPlanner:
@@ -61,6 +76,7 @@ class MPPIIsaacLabPlanner:
         self.cfg = cfg
         self.objective = objective
         self._latest_dof_state: Optional[bytes] = None
+        self._latest_object_states: Optional[List] = None
         self.num_envs = cfg.mppi.num_samples
         self.device = cfg.mppi.device
 
@@ -77,6 +93,7 @@ class MPPIIsaacLabPlanner:
             num_envs=cfg.mppi.num_samples,
             ee_link_name=cfg.ee_link_name,
             goal=cfg.goal,
+            env_spacing=getattr(cfg.isaaclab, "env_spacing", 1.5),
             object_cfgs=object_cfgs,
             contact_sensor_cfgs=contact_sensor_cfgs,
             static_cfgs=static_cfgs,
@@ -105,6 +122,14 @@ class MPPIIsaacLabPlanner:
         self._state_ph = torch.zeros(
             (self.num_envs, cfg.nx), device=self.device
         )
+
+        # Warm up: compile CUDA kernels and fill the GPU pipeline so the
+        # first real call isn't slower than subsequent ones.
+        # print("[MPPIIsaacLabPlanner] warming up CUDA kernels …", flush=True)
+        # for _ in range(5):
+        #     self.mppi.command(self._state_ph)
+        # torch.cuda.synchronize()
+        # print("[MPPIIsaacLabPlanner] warm-up done.", flush=True)
 
     # ------------------------------------------------------------------
     # MPPI callbacks
@@ -185,17 +210,47 @@ class MPPIIsaacLabPlanner:
             object_states.append((pos, quat))
             offset += 7
 
+        if not object_states and self._latest_object_states:
+            object_states = self._latest_object_states
         self.sim.reset_to_state(q, dq, object_states=object_states if object_states else None)
         return self._command()
 
     def _command(self) -> bytes:
-        return torch_to_bytes(self.mppi.command(self._state_ph))
+        action = self.mppi.command(self._state_ph)
+        # torch.cuda.synchronize()
+        return torch_to_bytes(action)
 
     def get_robot_state(self) -> bytes:
         """Return the latest dof state received from the bridge."""
         if self._latest_dof_state is None:
             return torch_to_bytes(torch.zeros(self.sim.num_dof * 2))
         return self._latest_dof_state
+
+    def set_object_states(self, obj_state_bytes: bytes):
+        """Receive object states from the bridge (Genesis format).
+
+        Format: [q_obj0(6), q_obj1(6), ..., dq_obj0(6), dq_obj1(6), ...]
+        where each q_obj = [x, y, z, euler_x, euler_y, euler_z].
+        """
+        data = bytes_to_torch(obj_state_bytes)
+        n_objs = data.numel() // 12  # 6 pose + 6 vel per object
+        states = []
+        for i in range(n_objs):
+            q_obj = data[i * 6: i * 6 + 6]
+            pos  = q_obj[:3].to(self.device, dtype=torch.float32)
+            quat = _euler_xyz_to_quat_wxyz(q_obj[3:6]).to(self.device)
+            states.append((pos, quat))
+        self._latest_object_states = states if states else None
+
+    def get_object_states(self) -> bytes:
+        """Return latest object states as flat [pos(3), quat(4), ...] tensor."""
+        if not self._latest_object_states:
+            return torch_to_bytes(torch.zeros(0))
+        parts = []
+        for pos, quat in self._latest_object_states:
+            parts.append(pos.cpu())
+            parts.append(quat.cpu())
+        return torch_to_bytes(torch.cat(parts))
 
     def get_goal(self) -> bytes:
         return torch_to_bytes(self.sim.get_goal())

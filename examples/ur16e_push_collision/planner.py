@@ -48,9 +48,10 @@ if _PROJECT_ROOT not in sys.path:
 
 from mppi_torch.mppi import MPPIConfig
 from isaaclab.sensors import ContactSensorCfg
+from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import UR16E_CFG
+from robots.ur16e import make_ur16e_cfg
 from examples.ur16e_push.box_cfg import make_box_cfg
 
 
@@ -80,6 +81,8 @@ class PlannerConfig:
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     boxes: List[BoxCfgEntry] = field(default_factory=list)
+    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
+    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
 
 
 def _load_config(yaml_path: str) -> PlannerConfig:
@@ -89,7 +92,10 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.n_steps      = raw.get("n_steps",      cfg.n_steps)
     cfg.nx           = raw.get("nx",           cfg.nx)
     cfg.goal         = raw.get("goal",         cfg.goal)
-    cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.ee_link_name      = raw.get("ee_link_name",      cfg.ee_link_name)
+    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
+    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+
     if "mppi" in raw:
         cfg.mppi = MPPIConfig(**{k: v for k, v in raw["mppi"].items()})
     if "isaaclab" in raw:
@@ -125,6 +131,20 @@ def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         vz + w * tz + (x * ty - y * tx),
     ], dim=-1)
 
+def _quat_to_euler_zyx(q: torch.Tensor) -> torch.Tensor:
+    """ZYX Euler angles [yaw, pitch, roll] from (N, 4) wxyz quaternion.
+
+    Equivalent to:
+      pytorch3d.transforms.matrix_to_euler_angles(
+          pytorch3d.transforms.quaternion_to_matrix(q), "ZYX")
+    """
+    w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+    yaw   = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    pitch = torch.asin(torch.clamp(2.0 * (w * y - z * x), -1.0, 1.0))
+    roll  = torch.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    return torch.stack([yaw, pitch, roll], dim=1)  # (N, 3)
+
+_ORI_TARGET_ZYX = torch.tensor([0.0, 0.0, torch.pi])
 
 class Objective:
     """Push cost with collision penalty.
@@ -138,12 +158,12 @@ class Objective:
 
     def __init__(self):
         self.weights = {
-            "robot_to_block": 45.0,
+            "robot_to_block": 5.0,
             "block_to_goal":  25.0,
-            "robot_ori":       5.0,
+            "robot_ori":      5.0,
             "block_height":   20.0,
             "push_align":     45.0,
-            "collision":      5.0,
+            "collision":      2.0,
         }
 
     def reset(self):
@@ -178,7 +198,10 @@ class Objective:
             + 1.0
         )
 
-        robot_ori = torch.abs(ee_quat[:, 3])
+        # robot_ori = torch.abs(ee_quat[:, 3])
+        euler = _quat_to_euler_zyx(ee_quat)                            # (N, 3)
+        robot_ori = torch.linalg.norm(
+            euler - _ORI_TARGET_ZYX.to(sim.device), dim=1) 
 
         # --- collision cost via wrist F/T sensor ---
         # net_forces_w: (num_envs, 1, 3) — one body (wrist_3_link)
@@ -219,13 +242,12 @@ def main():
         history_length=0,
         debug_vis=False,
     )
-
-    # Enable PhysX contact reporting on the robot's rigid bodies
-    from isaaclab.sim import RigidBodyPropertiesCfg
-    robot_cfg = UR16E_CFG.replace(
-        spawn=UR16E_CFG.spawn.replace(
+    
+    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, rot=(1, 0, 0, 0), joint_pos=cfg.robot_init_joints)
+    robot_cfg = _base_robot_cfg.replace(
+        spawn=_base_robot_cfg.spawn.replace(
             rigid_props=RigidBodyPropertiesCfg(
-                disable_gravity=False,
+                disable_gravity=True,
                 max_depenetration_velocity=5.0,
                 enable_gyroscopic_forces=True,
             ),

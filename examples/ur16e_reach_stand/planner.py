@@ -53,7 +53,7 @@ from mppi_torch.mppi import MPPIConfig
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
 from robots.ur16e import UR16E_CFG
-from examples.ur16e_reach_stand.scene import make_static_cfgs
+from examples.ur16e_reach_stand.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -64,6 +64,7 @@ from examples.ur16e_reach_stand.scene import make_static_cfgs
 class IsaacLabCfg:
     dt: float = 1.0 / 60.0
     visualize_rollouts: bool = True
+    env_spacing: float = 1.5
 
 
 @dataclass
@@ -95,6 +96,7 @@ def _load_config(yaml_path: str) -> PlannerConfig:
         cfg.isaaclab = IsaacLabCfg(
             dt=il.get("dt", 1.0 / 60.0),
             visualize_rollouts=il.get("visualize_rollouts", True),
+            env_spacing=il.get("env_spacing", 1.5),
         )
 
     return cfg
@@ -117,6 +119,22 @@ def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         vz + w * tz + (x * ty - y * tx),
     ], dim=-1)
 
+def _quat_to_euler_zyx(q: torch.Tensor) -> torch.Tensor:
+    """ZYX Euler angles [yaw, pitch, roll] from (N, 4) wxyz quaternion.
+
+    Equivalent to:
+      pytorch3d.transforms.matrix_to_euler_angles(
+          pytorch3d.transforms.quaternion_to_matrix(q), "ZYX")
+    """
+    w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
+    yaw   = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    pitch = torch.asin(torch.clamp(2.0 * (w * y - z * x), -1.0, 1.0))
+    roll  = torch.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+    return torch.stack([yaw, pitch, roll], dim=1)  # (N, 3)
+
+
+_ORI_TARGET_ZYX = torch.tensor([0.0, 0.0, torch.pi])
+
 
 class Objective:
     """
@@ -127,11 +145,12 @@ class Objective:
     along that link's local Z axis).
     """
 
-    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.14])
+    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.12])
 
     def __init__(self, cfg: PlannerConfig):
         self.weights = {
-            "ee_to_goal": 1.0,
+            "ee_to_goal": 30.0,
+            "robot_ori":     7.0,
         }
 
     def reset(self):
@@ -145,8 +164,17 @@ class Objective:
         tcp_offset = self.TCP_OFFSET_LOCAL.to(sim.device).expand(sim.num_envs, 3)
         tcp_pos = ee_pos + _quat_apply(ee_quat, tcp_offset)  # (num_envs, 3)
 
-        dist = torch.linalg.norm(tcp_pos - goal.unsqueeze(0), dim=1)
-        return self.weights["ee_to_goal"] * dist
+        dist = torch.linalg.norm(tcp_pos - goal.unsqueeze(0), dim=1, ord=1)
+        # dist = torch.clamp(dist - 0.03, min=0.0)  # 3 cm dead-band: zero cost when at goal
+
+        # Orientation: penalise deviation from pointing-down pose [0, 0, π]
+        euler = _quat_to_euler_zyx(ee_quat)                            # (N, 3)
+        robot_ori = torch.linalg.norm(
+            euler - _ORI_TARGET_ZYX.to(sim.device), dim=1)            # (N,)
+
+        return (self.weights["ee_to_goal"] * dist 
+                + self.weights["robot_ori"] * robot_ori
+                )
 
 
 # ===========================================================================
@@ -163,6 +191,7 @@ def main():
         objective,
         robot_cfg=UR16E_CFG,
         prior=None,
+        # object_cfgs=make_block_cfgs(),
         static_cfgs=make_static_cfgs(),
     )
 

@@ -67,8 +67,9 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
+from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from robots.ur16e import UR16E_CFG
+from robots.ur16e import make_ur16e_cfg
 from examples.ur16e_push.box_cfg import make_box_cfg
 
 
@@ -95,7 +96,8 @@ class WorldConfig:
     ee_link_name: str = "wrist_3_link"
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     boxes: List[BoxCfgEntry] = field(default_factory=list)
-
+    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
+    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
 
 def _load_config(yaml_path: str) -> WorldConfig:
     with open(yaml_path) as f:
@@ -104,6 +106,9 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.n_steps      = raw.get("n_steps",      cfg.n_steps)
     cfg.goal         = raw.get("goal",         cfg.goal)
     cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
+    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+
     if "isaaclab" in raw:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
@@ -180,7 +185,7 @@ class RolloutVisualiser:
     GOAL_COLOR    = (1.0, 0.4, 0.0, 1.0)
     GOAL_SIZE     = 15.0
 
-    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.14])
+    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.12])
 
     def __init__(self):
         from isaacsim.util.debug_draw import _debug_draw
@@ -282,10 +287,21 @@ def main():
     n_rollouts_draw = 0 if headless else args_cli.n_rollouts_draw
 
     object_cfgs = [make_box_cfg(b.size, b.mass, b.init_pos) for b in cfg.boxes]
-
+    
+    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
+    robot_cfg = _base_robot_cfg.replace(
+        spawn=_base_robot_cfg.spawn.replace(
+            rigid_props=RigidBodyPropertiesCfg(
+                disable_gravity=True,
+                max_depenetration_velocity=5.0,
+                enable_gyroscopic_forces=True,
+            ),
+            activate_contact_sensors=True,
+        )
+    )
     world = IsaacLabWrapper(
         cfg=IsaacLabConfig(dt=cfg.isaaclab.dt, device="cuda:0", render=not headless),
-        robot_cfg=UR16E_CFG,
+        robot_cfg=robot_cfg,
         num_envs=1,
         ee_link_name=cfg.ee_link_name,
         goal=cfg.goal,
@@ -348,6 +364,7 @@ def main():
 
         # 5. Read new state
         q   = world.get_joint_pos()[0].clone()
+        print(q)
         dq  = world.get_joint_vel()[0].clone()
         box_pos_now = world.get_object_pos()[0]
 
@@ -362,10 +379,10 @@ def main():
             end="", flush=True,
         )
 
-        # 7. Stop when box reaches goal
-        if dist < GOAL_THRESHOLD:
-            print(f"\n[world] Goal reached (dist={dist:.4f} m < {GOAL_THRESHOLD} m).")
-            break
+        # # 7. Stop when box reaches goal
+        # if dist < GOAL_THRESHOLD:
+        #     print(f"\n[world] Goal reached (dist={dist:.4f} m < {GOAL_THRESHOLD} m).")
+        #     break
 
     monitor.save()
     print("\n[world] Done.")

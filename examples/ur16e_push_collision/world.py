@@ -68,7 +68,7 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from robots.ur16e import UR16E_CFG
+from robots.ur16e import make_ur16e_cfg
 from examples.ur16e_push.box_cfg import make_box_cfg
 
 
@@ -95,7 +95,8 @@ class WorldConfig:
     ee_link_name: str = "wrist_3_link"
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     boxes: List[BoxCfgEntry] = field(default_factory=list)
-
+    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
+    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
 
 def _load_config(yaml_path: str) -> WorldConfig:
     with open(yaml_path) as f:
@@ -104,6 +105,9 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.n_steps      = raw.get("n_steps",      cfg.n_steps)
     cfg.goal         = raw.get("goal",         cfg.goal)
     cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
+    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+
     if "isaaclab" in raw:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
@@ -358,12 +362,13 @@ def main():
         debug_vis=False,
     )
 
-    # Enable PhysX contact reporting so the sensor receives force data.
-    robot_cfg = UR16E_CFG.replace(
-        spawn=UR16E_CFG.spawn.replace(
+    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, rot=(1, 0, 0, 0), joint_pos=cfg.robot_init_joints)
+    robot_cfg = _base_robot_cfg.replace(
+        spawn=_base_robot_cfg.spawn.replace(
             rigid_props=RigidBodyPropertiesCfg(
-                disable_gravity=False,
+                disable_gravity=True,
                 max_depenetration_velocity=5.0,
+                enable_gyroscopic_forces=True,
             ),
             activate_contact_sensors=True,
         )
@@ -434,12 +439,14 @@ def main():
         world.step()
 
         q  = world.get_joint_pos()[0].clone()
+        print(q)
         dq = world.get_joint_vel()[0].clone()
         box_pos_now = world.get_object_pos(0)[0]
 
         # Wrist contact force — shape (1, 1, 3) → squeeze to (3,)
         force_xyz = world.get_contact_forces(0)[0, 0]
         force_mag = torch.abs(force_xyz[2]).item()   # vertical (Z) only
+        print(force_mag)
         if force_plot is not None:
             force_plot.record(step, force_xyz)
 
