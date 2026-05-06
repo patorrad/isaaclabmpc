@@ -1,11 +1,12 @@
-
-*.gif
-*.mp4
-*.csv
-*.png
-
-*.npy
-*.pyc
+# Python
 __pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
 
-**/outputs/
+# claude
+.claude
+CLAUDE.md
