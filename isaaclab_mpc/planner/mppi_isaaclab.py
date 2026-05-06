@@ -281,6 +281,16 @@ class MPPIIsaacLabPlanner:
         """Return the total number of sequential push steps (if objective supports it)."""
         return torch_to_bytes(torch.tensor(float(len(getattr(self.objective, "steps", [])))))
 
+    def get_current_goal_pos(self) -> bytes:
+        """Return the goal position for the current push step (block target, local frame)."""
+        steps = getattr(self.objective, "steps", [])
+        current = getattr(self.objective, "current_step", 0)
+        if steps and current < len(steps):
+            goal = torch.tensor(steps[current]["end_pos"], dtype=torch.float32)
+        else:
+            goal = torch.zeros(3)
+        return torch_to_bytes(goal)
+
     def test(self, msg: str):
         """Ping/echo for connection testing."""
         print(f"[MPPIIsaacLabPlanner] test: {msg}")

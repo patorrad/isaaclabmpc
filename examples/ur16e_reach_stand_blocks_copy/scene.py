@@ -13,7 +13,7 @@ Block index → puzzle role (matches solution JSON obj_idx):
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 
-_STAND_URDF = "/home/paolo/Documents/genesismpc/assets/stand/stand.urdf"
+from robots import STAND_URDF_PATH as _STAND_URDF
 
 # All puzzle blocks are 8 cm cubes, 1 kg
 _BLOCK_SIZE = (0.05, 0.05, 0.05)
