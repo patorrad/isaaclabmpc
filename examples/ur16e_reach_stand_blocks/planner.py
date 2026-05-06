@@ -251,6 +251,8 @@ class Objective:
         step = self.steps[self.current_step]
         obj_idx  = step["obj_idx"]
         goal_pos = torch.tensor(step["end_pos"], dtype=torch.float32, device=device)
+        # end_pos is in IsaacLab local (env-relative) frame — same frame as
+        # get_object_pos() — so no coordinate conversion is needed here.
 
         obj_pos = sim.get_object_pos(obj_idx)  # (num_envs, 3)
 
