@@ -243,7 +243,6 @@ class RolloutVisualiser:
         # local → world, then shift to TCP tip
         rollouts = rollouts.permute(1, 0, 2).cpu() + origin + tcp_offset_world  # (num_envs, H, 3)
         num_envs = rollouts.shape[0]
-        print(rollouts[0, 0, :])
         stride = max(1, num_envs // n_draw)
         rollouts_sub = rollouts[::stride]
 
@@ -330,14 +329,7 @@ def main():
             break
 
         # ------------------------------------------------------------------
-        # 1. Sync current goal to planner
-        # ------------------------------------------------------------------
-        with world._goal_lock:
-            goal_now = world._goal.clone()
-        planner.set_goal(torch_to_bytes(goal_now.cpu()))
-
-        # ------------------------------------------------------------------
-        # 2. Call MPPI planner — returns optimal joint-velocity command
+        # 1. Call MPPI planner — returns optimal joint-velocity command
         #    Append block states [pos(3), quat(4)] × 4 so the planner can
         #    reset parallel envs to the current real block positions.
         # ------------------------------------------------------------------
@@ -352,12 +344,13 @@ def main():
         u = bytes_to_torch(u_bytes).to(device)   # (DOF,)
 
         # ------------------------------------------------------------------
-        # 3. Visualise rollouts + goal (before stepping so viewer is current)
+        # 2. Visualise rollouts + goal (before stepping so viewer is current)
         # ------------------------------------------------------------------
         if vis is not None:
             rollout_bytes = planner.get_rollouts()
             origin = world.scene.env_origins[0]
             ee_quat = world.get_ee_quat()[0]      # (4,) w,x,y,z world frame
+            goal_now = bytes_to_torch(planner.get_current_goal_pos())
             vis.update(rollout_bytes, goal_now, ee_quat, origin, n_rollouts_draw)
 
         # ------------------------------------------------------------------

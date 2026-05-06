@@ -4,6 +4,7 @@ setup(
     name="isaaclab_mpc",
     version="0.1.0",
     packages=find_packages(include=["isaaclab_mpc", "isaaclab_mpc.*", "robots"]),
+    package_data={"robots": ["stand/**/*", "ur_description/**/*"]},
     python_requires=">=3.11",
     install_requires=[
         # mppi_torch must be installed separately (editable install from
