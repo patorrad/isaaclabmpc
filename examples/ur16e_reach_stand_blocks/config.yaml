@@ -71,27 +71,53 @@ goal: [0.40, 0.10, 0.92]
 
 # # Path to the RRT solution JSON that defines the push sequence
 # solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
-solution_path: "/home/jack/research/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction.json"
+solution_path: "/home/jack/research/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution.json"
 
 # End-effector body name in the Isaac Lab articulation.
 # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
 # into wrist_3_link, so we reference wrist_3_link here.
 ee_link_name: "wrist_3_link"
 
-# MPPI parameters (mirrors genesismpc conf/mppi/ur5_stick_stacked.yaml)
+# # MPPI parameters (mirrors genesismpc conf/mppi/ur5_stick_stacked.yaml)
+# mppi:
+#   mppi_mode: "halton-spline"
+#   sampling_method: "halton"
+#   num_samples: 1000
+#   horizon: 12
+#   device: "cuda:0"
+#   u_min: [-0.2]
+#   u_max: [0.2]
+#   lambda_: 0.05
+#   noise_sigma:
+#     - [0.1, 0.0,  0.0,  0.0,  0.0,  0.0]
+#     - [0.0,  0.1, 0.0,  0.0,  0.0,  0.0]
+#     - [0.0,  0.0,  0.1, 0.0,  0.0,  0.0]
+#     - [0.0,  0.0,  0.0,  0.1, 0.0,  0.0]
+#     - [0.0,  0.0,  0.0,  0.0,  0.1, 0.0]
+#     - [0.0,  0.0,  0.0,  0.0,  0.0,  0.1]
+#   rollout_var_discount: 0.95
+#   update_cov: false
+#   sample_null_action: true
+#   filter_u: true
+#   use_priors: false
+#   seed_val: 0
+
+# Isaac Lab physics parameters
+# isaaclab:
+#   dt: 0.02 #16667 #0.0035
 mppi:
   mppi_mode: "halton-spline"
   sampling_method: "halton"
   num_samples: 1000
-  horizon: 12
+  horizon: 18
   device: "cuda:0"
-  u_min: [-0.2]
-  u_max: [0.2]
+  u_min: [-0.7]
+  u_max: [0.7]
   lambda_: 0.05
   noise_sigma:
-    - [0.1, 0.0,  0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.1, 0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.0,  0.1, 0.0,  0.0,  0.0]
+    - [0.2, 0.0,  0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.2, 0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.2, 0.0,  0.0,  0.0]
     - [0.0,  0.0,  0.0,  0.1, 0.0,  0.0]
     - [0.0,  0.0,  0.0,  0.0,  0.1, 0.0]
     - [0.0,  0.0,  0.0,  0.0,  0.0,  0.1]
@@ -104,7 +130,7 @@ mppi:
 
 # Isaac Lab physics parameters
 isaaclab:
-  dt: 0.02 #16667 #0.0035
+  dt: 0.016667 #0.0035
   visualize_rollouts: true
   # Table is 2.5m in Y — envs must be spaced far enough that tables don't overlap.
   # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m
