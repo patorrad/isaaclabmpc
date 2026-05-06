@@ -56,18 +56,18 @@
 n_steps: 10000
 
 # World-frame position of the robot base [x, y, z] (metres)
-robot_init_pos: [0.208, 0.0, 2.075] #1.9] #2.075]
+robot_init_pos: [0.208, 0.0, 1.775] #1.875] #1.700] #2.075] #1.9] #2.075]
 
 # Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
 #                              wrist_1, wrist_2, wrist_3
-robot_init_joints: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275]
+robot_init_joints: [0.0, -2.5, 2.2, -0.042, 1.5802, 0.5275] #[0.549,-1.800,1.400,0.058] prev; [-2.2557,1.0872,0.8265] original Z=2.075
 
 # State dimension: 6 joint positions + 6 joint velocities
 nx: 12
 
 # Initial goal position in world frame [x, y, z]  (metres)
 # Adjust to a reachable pose for the UR16e home configuration
-goal: [0.40, 0.10, 0.92]
+goal: [0.40, 0.10, 1.00]
 
 # # Path to the RRT solution JSON that defines the push sequence
 # solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
@@ -109,7 +109,7 @@ mppi:
   mppi_mode: "halton-spline"
   sampling_method: "halton"
   num_samples: 1000
-  horizon: 18
+  horizon: 24
   device: "cuda:0"
   u_min: [-0.7]
   u_max: [0.7]
