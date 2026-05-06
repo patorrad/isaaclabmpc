@@ -6,5 +6,6 @@
 
 *.npy
 *.pyc
+__pycache__/
 
 **/outputs/
