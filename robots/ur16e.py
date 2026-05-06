@@ -118,7 +118,7 @@ UR16E_CFG = ArticulationCfg(
             effort_limit_sim=330.0,
             velocity_limit_sim=3.14,          # ~180 deg/s
             stiffness=0.0,                    # no position tracking
-            damping=100.0,                    # velocity-tracking gain
+            damping=20.0,                    # velocity-tracking gain
         ),
     },
 )

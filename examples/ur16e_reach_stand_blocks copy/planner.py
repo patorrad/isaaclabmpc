@@ -252,7 +252,6 @@ class Objective:
         step = self.steps[self.current_step]
         obj_idx  = step["obj_idx"]
         goal_pos = torch.tensor(step["end_pos"], dtype=torch.float32, device=device)
-        sim.set_goal(goal_pos)
 
         obj_pos = sim.get_object_pos(obj_idx)  # (num_envs, 3)
         # import pdb; pdb.set_trace()

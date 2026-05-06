@@ -242,6 +242,19 @@ class IsaacLabWrapper:
         u = u.to(self.device, non_blocking=True)
         self.robot.set_joint_velocity_target(u)
 
+    def apply_effort_cmd(self, u: torch.Tensor):
+        """Apply joint torque commands directly (effort/torque control mode).
+
+        Use this for torque-controlled robots (stiffness=0) instead of
+        apply_robot_cmd, which sets velocity targets and would scale the
+        torque by the actuator damping gain.
+
+        Args:
+            u: (num_envs, DOF) tensor of joint torques [Nm].
+        """
+        u = u.to(self.device, non_blocking=True)
+        self.robot.set_joint_effort_target(u)
+
     def step(self):
         """Advance physics one step for all environments."""
         if self.cfg.visualize_rollouts:
@@ -324,9 +337,12 @@ class IsaacLabWrapper:
         Returns zeros if the PhysX view is unavailable (e.g. CPU pipeline).
         """
         try:
-            return self.robot.root_physx_view.get_generalized_gravity_forces().to(self.device)
+            return self.robot.root_physx_view.get_gravity_compensation_forces().to(self.device)
         except Exception:
-            return torch.zeros(self.num_envs, self.num_dof, device=self.device)
+            try:
+                return self.robot.root_physx_view.get_generalized_gravity_forces().to(self.device)
+            except Exception:
+                return torch.zeros(self.num_envs, self.num_dof, device=self.device)
 
     def get_contact_forces(self, sensor_idx: int = 0) -> torch.Tensor:
         """Net contact forces for a sensor in world frame, shape (num_envs, num_bodies, 3).

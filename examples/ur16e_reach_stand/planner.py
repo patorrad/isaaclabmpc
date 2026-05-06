@@ -50,9 +50,10 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from mppi_torch.mppi import MPPIConfig
+from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import UR16E_CFG
+from robots.ur16e import make_ur16e_cfg
 from examples.ur16e_reach_stand.scene import make_static_cfgs, make_block_cfgs
 
 
@@ -73,6 +74,8 @@ class PlannerConfig:
     nx: int = 12
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
+    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
+    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
 
@@ -86,6 +89,8 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.nx = raw.get("nx", cfg.nx)
     cfg.goal = raw.get("goal", cfg.goal)
     cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
+    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
 
     if "mppi" in raw:
         mppi_raw = raw["mppi"]
@@ -151,6 +156,7 @@ class Objective:
         self.weights = {
             "ee_to_goal": 30.0,
             "robot_ori":     7.0,
+            "joint_vel":      1.0,
         }
 
     def reset(self):
@@ -171,9 +177,12 @@ class Objective:
         euler = _quat_to_euler_zyx(ee_quat)                            # (N, 3)
         robot_ori = torch.linalg.norm(
             euler - _ORI_TARGET_ZYX.to(sim.device), dim=1)            # (N,)
+        
+        joint_vel = torch.linalg.norm(sim.get_joint_vel(), dim=1)  # (num_envs,)
 
         return (self.weights["ee_to_goal"] * dist 
                 + self.weights["robot_ori"] * robot_ori
+                + self.weights["joint_vel"]    * joint_vel
                 )
 
 
@@ -185,11 +194,23 @@ def main():
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
 
+    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
+    robot_cfg = _base_robot_cfg.replace(
+        spawn=_base_robot_cfg.spawn.replace(
+            rigid_props=RigidBodyPropertiesCfg(
+                disable_gravity=True,
+                max_depenetration_velocity=5.0,
+                enable_gyroscopic_forces=True,
+            ),
+            activate_contact_sensors=True,
+        )
+    )
+
     objective = Objective(cfg)
     planner = MPPIIsaacLabPlanner(
         cfg,
         objective,
-        robot_cfg=UR16E_CFG,
+        robot_cfg=robot_cfg,
         prior=None,
         # object_cfgs=make_block_cfgs(),
         static_cfgs=make_static_cfgs(),

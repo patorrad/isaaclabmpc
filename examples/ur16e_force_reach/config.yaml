@@ -18,6 +18,13 @@ goal: [0.4, 0.2, 0.6]
 # End-effector body name in the Isaac Lab articulation
 ee_link_name: "wrist_3_link"
 
+# World-frame position of the robot base [x, y, z] (metres)
+robot_init_pos: [0.208, 0.0, 2.075]
+
+# Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
+#                              wrist_1, wrist_2, wrist_3
+robot_init_joints: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275]
+
 # Cost weights
 weights:
   ee_to_goal:     1.0   # penalise EE distance to goal
@@ -31,8 +38,8 @@ mppi:
   num_samples: 750
   horizon: 12
   device: "cuda:0"
-  u_min: [-80.0]   # Nm — conservative limit shared across all joints
-  u_max: [80.0]
+  u_min: [-10.0]   # Nm — conservative limit shared across all joints
+  u_max: [10.0]
   lambda_: 0.1
   noise_sigma:
     # Shoulder joints tolerate larger torque excursions than wrists

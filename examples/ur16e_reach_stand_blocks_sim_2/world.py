@@ -1,9 +1,8 @@
-"""World runner for the UR16e force-control reach task.
+"""World runner for UR16e reach (Isaac Lab backend).
 
-Runs a single rendered environment and queries the MPPI planner server
-(planner.py) for joint-torque commands each step.  Gravity compensation is
-added in this process too, mirroring what the planner does in its rollouts,
-so the world simulation is consistent with the sampled trajectories.
+Runs a single-environment rendered simulation and calls the MPPI planner
+server (planner.py) via zerorpc to get joint-velocity commands.
+MPPI rollout trajectories are drawn in the viewer each step.
 
 Start the planner first, then this runner:
 
@@ -11,21 +10,16 @@ Start the planner first, then this runner:
     cd /home/paolo/Documents/isaaclabmpc
     CONDA_PREFIX=/home/paolo/miniconda3/envs/env_isaaclab \\
         /home/paolo/miniconda3/envs/env_isaaclab/bin/python \\
-        examples/ur16e_force_reach/planner.py
+        examples/ur16e_reach/planner.py
 
     # Terminal 2 — rendered world:
     cd /home/paolo/Documents/isaaclabmpc
     CONDA_PREFIX=/home/paolo/miniconda3/envs/env_isaaclab \\
         /home/paolo/miniconda3/envs/env_isaaclab/bin/python \\
-        examples/ur16e_force_reach/world.py
+        examples/ur16e_reach/world.py
 
-    # Headless world (no viewer):
+    # Headless world (no viewer, no rollout vis):
     ... world.py --headless
-
-Keyboard controls (viewer window):
-    Arrow keys  — move goal in X/Y  (+/- 2 cm per key press)
-    PgUp/PgDn   — move goal in Z
-    Ctrl-C      — quit
 """
 
 # ===========================================================================
@@ -35,7 +29,7 @@ import argparse
 
 from isaaclab.app import AppLauncher
 
-parser = argparse.ArgumentParser(description="UR16e force-reach world runner")
+parser = argparse.ArgumentParser(description="UR16e world runner")
 parser.add_argument("--n_steps", type=int, default=100000)
 parser.add_argument("--planner_addr", type=str, default="tcp://localhost:4242")
 parser.add_argument("--n_rollouts_draw", type=int, default=50,
@@ -52,7 +46,6 @@ simulation_app = app_launcher.app
 import os
 import sys
 import time
-import threading
 
 import torch
 import yaml
@@ -64,20 +57,11 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-import isaaclab.sim as sim_utils
-from isaaclab.actuators import ImplicitActuatorCfg
-from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from robots.ur16e import make_ur16e_cfg
-
-WRIST_CONTACT_SENSOR = ContactSensorCfg(
-    prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
-    update_period=0.0,
-    history_length=0,
-    debug_vis=False,
-)
+from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -94,20 +78,21 @@ class WorldConfig:
     n_steps: int = 100000
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
+    isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
-    isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
 
 
 def _load_config(yaml_path: str) -> WorldConfig:
     with open(yaml_path) as f:
         raw = yaml.safe_load(f)
     cfg = WorldConfig()
-    cfg.n_steps           = raw.get("n_steps",           cfg.n_steps)
-    cfg.goal              = raw.get("goal",              cfg.goal)
-    cfg.ee_link_name      = raw.get("ee_link_name",      cfg.ee_link_name)
+    cfg.n_steps = raw.get("n_steps", cfg.n_steps)
+    cfg.goal = raw.get("goal", cfg.goal)
+    cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+
     if "isaaclab" in raw:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
@@ -115,55 +100,18 @@ def _load_config(yaml_path: str) -> WorldConfig:
 
 
 # ===========================================================================
-# 4. Keyboard goal control (identical to ur16e_reach)
-# ===========================================================================
-
-class GoalController:
-    STEP = 0.02  # metres per key press
-
-    def __init__(self, goal: torch.Tensor, lock: threading.Lock):
-        self._goal = goal
-        self._lock = lock
-        self._start()
-
-    def _start(self):
-        try:
-            from pynput import keyboard
-
-            def on_press(key):
-                delta = torch.zeros(3, device=self._goal.device)
-                try:
-                    if key == keyboard.Key.up:
-                        delta[0] = self.STEP
-                    elif key == keyboard.Key.down:
-                        delta[0] = -self.STEP
-                    elif key == keyboard.Key.right:
-                        delta[1] = -self.STEP
-                    elif key == keyboard.Key.left:
-                        delta[1] = self.STEP
-                    elif key == keyboard.Key.page_up:
-                        delta[2] = self.STEP
-                    elif key == keyboard.Key.page_down:
-                        delta[2] = -self.STEP
-                except Exception:
-                    pass
-                if delta.any():
-                    with self._lock:
-                        self._goal.add_(delta)
-                    print(f"\n[goal] {self._goal.tolist()}", flush=True)
-
-            listener = keyboard.Listener(on_press=on_press)
-            listener.daemon = True
-            listener.start()
-        except Exception as e:
-            print(f"[GoalController] keyboard listener not available: {e}")
-
-
-# ===========================================================================
-# 5. Rollout + goal visualisation (identical to ur16e_reach)
+# 4. Rollout + goal visualisation
 # ===========================================================================
 
 def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    """Rotate vector v by quaternion q (w, x, y, z convention).
+
+    Args:
+        q: (4,) quaternion
+        v: (3,) vector
+    Returns:
+        (3,) rotated vector
+    """
     w, x, y, z = q.unbind(-1)
     vx, vy, vz = v.unbind(-1)
     tx = 2.0 * (y * vz - z * vy)
@@ -177,26 +125,45 @@ def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
 
 
 class RolloutVisualiser:
+    """Draws MPPI rollout trajectories and the goal marker each step."""
+
+    # Rollout line colour (RGBA) and thickness
     ROLLOUT_COLOR = (0.1, 0.9, 0.1, 0.25)
     ROLLOUT_WIDTH = 1
-    GOAL_COLOR    = (1.0, 0.4, 0.0, 1.0)
-    GOAL_SIZE     = 15.0
+    TARGET_COLOR = (1.0, 0.1, 0.1, 1.0)
+    TARGET_SIZE  = 20.0
 
     def __init__(self, tcp_offset_local: torch.Tensor):
+        """
+        Args:
+            tcp_offset_local: (3,) tool-tip offset in the EE link frame.
+                              Set to zeros if tracking the link origin directly.
+        """
         from isaacsim.util.debug_draw import _debug_draw
         self._draw = _debug_draw.acquire_debug_draw_interface()
         self.tcp_offset_local = tcp_offset_local
 
-    def update(self, rollouts_bytes, goal, ee_quat_world, env_origin, n_draw):
+    def update(
+        self,
+        rollouts_bytes: bytes,
+        ee_quat_world: torch.Tensor,
+        env_origin: torch.Tensor,
+        n_draw: int,
+        target: torch.Tensor = None,
+    ):
         self._draw.clear_lines()
         self._draw.clear_points()
 
         origin = env_origin.cpu()
+
+        # Rotate TCP offset into world frame using current EE orientation
         tcp_offset_world = _quat_apply(ee_quat_world.cpu(), self.tcp_offset_local)
 
-        gp = tuple((goal.cpu() + origin).tolist())
-        self._draw.draw_points([gp], [self.GOAL_COLOR], [self.GOAL_SIZE])
+        if target is not None:
+            tp = tuple((target.cpu() + origin).tolist())
+            self._draw.draw_points([tp], [self.TARGET_COLOR], [self.TARGET_SIZE])
 
+        # ---- rollout trajectories ----
         if n_draw <= 0:
             return
 
@@ -204,9 +171,14 @@ class RolloutVisualiser:
         if rollouts.shape[0] < 1 or rollouts.shape[1] < 1:
             return
 
-        rollouts = rollouts.permute(1, 0, 2).cpu() + origin + tcp_offset_world
-        stride = max(1, rollouts.shape[0] // n_draw)
-        for traj in rollouts[::stride]:
+        # local → world, then shift to TCP tip
+        rollouts = rollouts.permute(1, 0, 2).cpu() + origin + tcp_offset_world  # (num_envs, H, 3)
+        num_envs = rollouts.shape[0]
+        print(rollouts[0, 0, :])
+        stride = max(1, num_envs // n_draw)
+        rollouts_sub = rollouts[::stride]
+
+        for traj in rollouts_sub:
             pts = [tuple(p.tolist()) for p in traj]
             self._draw.draw_lines_spline(pts, self.ROLLOUT_COLOR, self.ROLLOUT_WIDTH, False)
 
@@ -226,24 +198,16 @@ def main():
     robot_cfg = _base_robot_cfg.replace(
         spawn=_base_robot_cfg.spawn.replace(
             rigid_props=RigidBodyPropertiesCfg(
-                disable_gravity=False,  # gravity must be on for gravity-compensation to work
+                disable_gravity=True,
                 max_depenetration_velocity=5.0,
                 enable_gyroscopic_forces=True,
             ),
             activate_contact_sensors=True,
-        ),
-        actuators={
-            "arm": ImplicitActuatorCfg(
-                joint_names_expr=[".*_joint"],
-                effort_limit_sim=330.0,
-                velocity_limit_sim=3.14,
-                stiffness=0.0,
-                damping=10.0,
-            ),
-        },
+        )
     )
+
     # ------------------------------------------------------------------
-    # World simulation: single env, effort-mode robot, contact sensor
+    # World simulation: single env, rendered
     # ------------------------------------------------------------------
     world = IsaacLabWrapper(
         cfg=IsaacLabConfig(
@@ -255,14 +219,24 @@ def main():
         num_envs=1,
         ee_link_name=cfg.ee_link_name,
         goal=cfg.goal,
-        contact_sensor_cfgs=[WRIST_CONTACT_SENSOR],
+        object_cfgs=make_block_cfgs(),
+        static_cfgs=make_static_cfgs(),
     )
     device = world.device
     DOF = world.num_dof
 
-    GoalController(world._goal, world._goal_lock)
+    if not headless:
+        world.sim_context.set_camera_view(
+            eye=[1.0305, 1.0702, 1.882],
+            target=[0.0437, -0.0436, 0.7],
+        )
 
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.14])
+    # TCP offset: offset from wrist_3_link origin to tool tip in wrist_3_link frame.
+    # tool0 +Z == wrist_3_link +Z (fixed joint chain has no translation, only rotation).
+    # The pipe-nipple gripper cylinder extends 0.14 m along +Z.
+    tcp_offset_local = torch.tensor([0.0, 0.0, 0.12])
+
+    # Rollout visualiser (only when rendering)
     vis = RolloutVisualiser(tcp_offset_local) if not headless else None
 
     # ------------------------------------------------------------------
@@ -277,10 +251,11 @@ def main():
     # ------------------------------------------------------------------
     # Initial state
     # ------------------------------------------------------------------
-    q  = world.get_joint_pos()[0].clone()
-    dq = world.get_joint_vel()[0].clone()
+    q = world.get_joint_pos()[0].clone()   # (DOF,)
+    dq = world.get_joint_vel()[0].clone()  # (DOF,)
 
-    print(f"[world] Goal: {cfg.goal}  (arrow keys / PgUp / PgDn to move)")
+    print(f"[world] Goal: {cfg.goal}  (use arrow keys / PgUp / PgDn to move)")
+    print(f"[world] Body names: {list(world.robot.body_names)}")
 
     t_prev = time.time()
 
@@ -288,62 +263,84 @@ def main():
         if not simulation_app.is_running():
             break
 
-        # ------------------------------------------------------------------
-        # 1. Sync goal to planner
-        # ------------------------------------------------------------------
-        with world._goal_lock:
-            goal_now = world._goal.clone()
-        planner.set_goal(torch_to_bytes(goal_now.cpu()))
+        if not headless:
+            try:
+                from omni.kit.viewport.utility import get_active_viewport
+                from pxr import UsdGeom
+                import omni.usd
+                vp = get_active_viewport()
+                stage = omni.usd.get_context().get_stage()
+                cam_prim = stage.GetPrimAtPath(vp.camera_path)
+                xf = UsdGeom.Xformable(cam_prim).ComputeLocalToWorldTransform(0)
+                cam_pos = (xf[3][0], xf[3][1], xf[3][2])
+                fwd = (-xf[2][0], -xf[2][1], -xf[2][2])  # camera -Z in world frame
+                t = (0.7 - cam_pos[2]) / fwd[2] if abs(fwd[2]) > 1e-6 else 1.0
+                cam_target = (cam_pos[0] + t * fwd[0], cam_pos[1] + t * fwd[1], 0.7)
+                print(f"[world] Camera pos: {[round(v, 4) for v in cam_pos]}  target: {[round(v, 4) for v in cam_target]}", flush=True)
+            except Exception as e:
+                print(f"[world] Could not read camera pose: {e}")
 
         # ------------------------------------------------------------------
-        # 2. Call MPPI planner — returns residual joint torques
+        # 1. Call MPPI planner — returns optimal joint-velocity command
+        #    Append block states [pos(3), quat(4)] × 4 so the planner can
+        #    reset parallel envs to the current real block positions.
         # ------------------------------------------------------------------
-        dof_state = torch.cat([q, dq]).cpu()
-        u_bytes = planner.compute_torques_tensor(torch_to_bytes(dof_state), b"")
-        u = bytes_to_torch(u_bytes).to(device).view(DOF)   # (DOF,) residual torques [Nm]
+        block_states = []
+        for i in range(len(world.objects)):
+            pos  = world.get_object_pos(i)[0]   # (3,)
+            quat = world.get_object_quat(i)[0]  # (4,) w,x,y,z
+            block_states.append(pos)
+            block_states.append(quat)
+        dof_state = torch.cat([q, dq] + block_states)
+        u_bytes = planner.compute_action_tensor(torch_to_bytes(dof_state), b"")
+        u = bytes_to_torch(u_bytes).to(device)   # (DOF,)
 
         # ------------------------------------------------------------------
-        # 3. Visualise rollouts + goal
+        # 3. Visualise rollouts + goal (before stepping so viewer is current)
         # ------------------------------------------------------------------
+        goal = bytes_to_torch(planner.get_goal())
         if vis is not None:
             rollout_bytes = planner.get_rollouts()
-            origin  = world.scene.env_origins[0]
-            ee_quat = world.get_ee_quat()[0]
-            vis.update(rollout_bytes, goal_now, ee_quat, origin, n_rollouts_draw)
+            origin = world.scene.env_origins[0]
+            ee_quat = world.get_ee_quat()[0]      # (4,) w,x,y,z world frame
+            vis.update(rollout_bytes, ee_quat, origin, n_rollouts_draw, target=goal)
 
         # ------------------------------------------------------------------
-        # 4. Apply torque = MPPI residual + gravity compensation
-        #    This mirrors ForceReachPlanner._dynamics so the world execution
-        #    is consistent with the planner rollouts.
+        # 4. Apply command and step the world simulation
         # ------------------------------------------------------------------
-        grav = world.get_gravity_torques()[0]   # (DOF,)
-        world.apply_effort_cmd((u + grav).view(1, DOF))
-        world.step()
+        world.apply_robot_cmd(u.view(1, DOF))
+        world.step()                              # render=True if not headless
 
         # ------------------------------------------------------------------
         # 5. Read new state
         # ------------------------------------------------------------------
-        q  = world.get_joint_pos()[0].clone()
+        q = world.get_joint_pos()[0].clone()
         dq = world.get_joint_vel()[0].clone()
-        ee_pos = world.get_ee_pos()[0]
-
-        # Contact force magnitude for logging
-        forces    = world.get_contact_forces(0)            # (1, 1, 3)
-        force_mag = torch.linalg.norm(forces[0, 0, :]).item()
+        ee_pos = world.get_ee_pos()[0]            # (3,) local frame
 
         # ------------------------------------------------------------------
-        # 6. Logging
+        # 6. Logging — show TCP tip distance to current block goal
         # ------------------------------------------------------------------
-        dist    = torch.linalg.norm(ee_pos - goal_now).item()
+        try:
+            step_info = bytes_to_torch(planner.get_current_step()).item()
+            total_steps = bytes_to_torch(planner.get_total_steps()).item()
+            step_label = f"step {int(step_info)}/{int(total_steps)}"
+        except Exception:
+            step_label = ""
+
+        block_pos_strs = "  ".join(
+            f"b{i}[{world.get_object_pos(i)[0, 0]:.3f},{world.get_object_pos(i)[0, 1]:.3f},{world.get_object_pos(i)[0, 2]:.3f}]"
+            for i in range(len(world.objects))
+        )
         elapsed = time.time() - t_prev
-        t_prev  = time.time()
+        t_prev = time.time()
         print(
             f"\r[{step:05d}] "
-            f"EE [{ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}]  "
-            f"goal [{goal_now[0]:.2f}, {goal_now[1]:.2f}, {goal_now[2]:.2f}]  "
-            f"dist {dist:.4f} m  "
-            f"F_wrist {force_mag:.1f} N  "
-            f"{elapsed*1000:.0f} ms/step",
+            # f"EE [{ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}]  "
+            f"{block_pos_strs}  "
+            f"goal [{goal[0]:.3f}, {goal[1]:.3f}, {goal[2]:.3f}]  ",
+            # f"{step_label}  "
+            # f"{elapsed*1000:.0f} ms/step",
             end="",
             flush=True,
         )
