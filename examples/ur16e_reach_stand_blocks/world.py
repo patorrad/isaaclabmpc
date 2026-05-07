@@ -36,6 +36,9 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="UR16e world runner")
 parser.add_argument("--n_steps", type=int, default=100000)
+parser.add_argument("--scenario", type=str, default=None,
+                    help="Path to a puzzles YAML scenario file. "
+                         "Overrides the hardcoded block positions in scene.py.")
 parser.add_argument("--planner_addr", type=str, default="tcp://localhost:4242")
 parser.add_argument("--n_rollouts_draw", type=int, default=50,
                     help="Number of MPPI rollout trajectories to visualise (0 = off)")
@@ -67,7 +70,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
 
 
 # ===========================================================================
@@ -87,6 +90,8 @@ class WorldConfig:
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
+    viewer_lookat: List[float] = field(default_factory=lambda: [0.25, 0.0, 0.04])
+    viewer_eye:    List[float] = field(default_factory=lambda: [1.50, 0.0, 0.60])
 
 
 def _load_config(yaml_path: str) -> WorldConfig:
@@ -102,11 +107,33 @@ def _load_config(yaml_path: str) -> WorldConfig:
     if "isaaclab" in raw:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
+    if "viewer" in raw:
+        v = raw["viewer"]
+        cfg.viewer_lookat = v.get("lookat", cfg.viewer_lookat)
+        cfg.viewer_eye    = v.get("eye",    cfg.viewer_eye)
     return cfg
 
 
 # ===========================================================================
-# 4. Keyboard goal control
+# 4. Camera helpers
+# ===========================================================================
+
+def _get_table_top_z() -> float:
+    """Query the USD stage for the table prim's world bounding-box top.
+
+    The table is the second static object (static_1) in make_static_cfgs().
+    Returns the Z coordinate of the table surface in world frame.
+    """
+    from pxr import UsdGeom, Usd
+    import omni.usd
+    stage = omni.usd.get_context().get_stage()
+    prim = stage.GetPrimAtPath("/World/envs/env_0/Static1")
+    bbox = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default"]).ComputeWorldBound(prim)
+    return float(bbox.GetRange().GetMax()[2])
+
+
+# ===========================================================================
+# 5. Keyboard goal control
 # ===========================================================================
 
 class GoalController:
@@ -153,7 +180,7 @@ class GoalController:
 
 
 # ===========================================================================
-# 5. Rollout + goal visualisation
+# 6. Rollout + goal visualisation
 # ===========================================================================
 
 def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -252,7 +279,7 @@ class RolloutVisualiser:
 
 
 # ===========================================================================
-# 6. Control loop
+# 7. Control loop
 # ===========================================================================
 
 def main():
@@ -260,6 +287,14 @@ def main():
     cfg = _load_config(cfg_path)
     cfg.n_steps = args_cli.n_steps
     headless = getattr(args_cli, "headless", False)
+
+    block_positions = None
+    if args_cli.scenario is not None:
+        with open(args_cli.scenario) as f:
+            sc = yaml.safe_load(f)
+        is_ = sc["initial_state"]
+        bin_positions = [is_["target_pos"]] + [o["pos"] for o in is_["obstacles"]]
+        block_positions = [_bin_to_mppi_local(p) for p in bin_positions]
     n_rollouts_draw = 0 if headless else args_cli.n_rollouts_draw
 
     _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
@@ -287,11 +322,18 @@ def main():
         num_envs=1,
         ee_link_name=cfg.ee_link_name,
         goal=cfg.goal,
-        object_cfgs=make_block_cfgs(),
+        object_cfgs=make_block_cfgs(positions=block_positions),
         static_cfgs=make_static_cfgs(),
     )
     device = world.device
     DOF = world.num_dof
+
+    # Set viewer camera — z offsets are above the table surface queried from USD
+    if not headless:
+        table_top_z = _get_table_top_z()
+        lookat = (cfg.viewer_lookat[0], cfg.viewer_lookat[1], table_top_z + cfg.viewer_lookat[2])
+        eye    = (cfg.viewer_eye[0],    cfg.viewer_eye[1],    table_top_z + cfg.viewer_eye[2])
+        world.sim_context.set_camera_view(eye, lookat)
 
     # Keyboard goal control
     GoalController(world._goal, world._goal_lock)
