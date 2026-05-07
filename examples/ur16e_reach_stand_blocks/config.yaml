@@ -56,7 +56,7 @@ step_threshold: 0.04
 n_steps: 10000
 
 # World-frame position of the robot base [x, y, z] (metres)
-robot_init_pos: [0.20, 0.0, 2.075] #1.9] #2.075]
+robot_init_pos: [0.208, 0.0, 1.775] #1.9] #2.075]
 
 # Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
 #                              wrist_1, wrist_2, wrist_3
@@ -136,8 +136,6 @@ isaaclab:
   # Table is 2.5m in Y — envs must be spaced far enough that tables don't overlap.
   # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m
   env_spacing: 3.0
-stand_urdf: "/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/stand/stand.urdf"
-
 viewer:
   # x, y in world frame; z is height ABOVE the table surface.
   # Table top z is queried from the USD prim at runtime, so this tracks

@@ -59,7 +59,8 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import make_ur16e_cfg
+from assets.robots.ur16e import make_ur16e_cfg
+from robots import STAND_URDF_PATH as _STAND_URDF_PATH
 from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
 
 
@@ -81,7 +82,7 @@ class PlannerConfig:
     ee_link_name: str = "wrist_3_link"
     solution_path: str = "solution_obs_3_simple_extraction_robot.json"
     step_threshold: float = 0.02
-    stand_urdf: str = ""
+    stand_urdf: str = _STAND_URDF_PATH
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
