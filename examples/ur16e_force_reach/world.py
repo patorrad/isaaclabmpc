@@ -64,11 +64,20 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+import isaaclab.sim as sim_utils
+from isaaclab.actuators import ImplicitActuatorCfg
+from isaaclab.sensors import ContactSensorCfg
+from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
+from robots.ur16e import make_ur16e_cfg
 
-# Import the effort-mode robot config and contact sensor from the planner module
-from examples.ur16e_force_reach.planner import UR16E_EFFORT_CFG, WRIST_CONTACT_SENSOR
+WRIST_CONTACT_SENSOR = ContactSensorCfg(
+    prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
+    update_period=0.0,
+    history_length=0,
+    debug_vis=False,
+)
 
 
 # ===========================================================================
@@ -85,6 +94,8 @@ class WorldConfig:
     n_steps: int = 100000
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
+    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
+    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
 
 
@@ -92,9 +103,11 @@ def _load_config(yaml_path: str) -> WorldConfig:
     with open(yaml_path) as f:
         raw = yaml.safe_load(f)
     cfg = WorldConfig()
-    cfg.n_steps      = raw.get("n_steps",      cfg.n_steps)
-    cfg.goal         = raw.get("goal",         cfg.goal)
-    cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.n_steps           = raw.get("n_steps",           cfg.n_steps)
+    cfg.goal              = raw.get("goal",              cfg.goal)
+    cfg.ee_link_name      = raw.get("ee_link_name",      cfg.ee_link_name)
+    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
+    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
     if "isaaclab" in raw:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
@@ -209,6 +222,26 @@ def main():
     headless = getattr(args_cli, "headless", False)
     n_rollouts_draw = 0 if headless else args_cli.n_rollouts_draw
 
+    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
+    robot_cfg = _base_robot_cfg.replace(
+        spawn=_base_robot_cfg.spawn.replace(
+            rigid_props=RigidBodyPropertiesCfg(
+                disable_gravity=False,  # gravity must be on for gravity-compensation to work
+                max_depenetration_velocity=5.0,
+                enable_gyroscopic_forces=True,
+            ),
+            activate_contact_sensors=True,
+        ),
+        actuators={
+            "arm": ImplicitActuatorCfg(
+                joint_names_expr=[".*_joint"],
+                effort_limit_sim=330.0,
+                velocity_limit_sim=3.14,
+                stiffness=0.0,
+                damping=10.0,
+            ),
+        },
+    )
     # ------------------------------------------------------------------
     # World simulation: single env, effort-mode robot, contact sensor
     # ------------------------------------------------------------------
@@ -218,7 +251,7 @@ def main():
             device="cuda:0",
             render=not headless,
         ),
-        robot_cfg=UR16E_EFFORT_CFG,
+        robot_cfg=robot_cfg,
         num_envs=1,
         ee_link_name=cfg.ee_link_name,
         goal=cfg.goal,
@@ -266,8 +299,8 @@ def main():
         # 2. Call MPPI planner — returns residual joint torques
         # ------------------------------------------------------------------
         dof_state = torch.cat([q, dq]).cpu()
-        u_bytes = planner.compute_action_tensor(torch_to_bytes(dof_state), b"")
-        u = bytes_to_torch(u_bytes).to(device)   # (DOF,) residual torques [Nm]
+        u_bytes = planner.compute_torques_tensor(torch_to_bytes(dof_state), b"")
+        u = bytes_to_torch(u_bytes).to(device).view(DOF)   # (DOF,) residual torques [Nm]
 
         # ------------------------------------------------------------------
         # 3. Visualise rollouts + goal
@@ -284,7 +317,7 @@ def main():
         #    is consistent with the planner rollouts.
         # ------------------------------------------------------------------
         grav = world.get_gravity_torques()[0]   # (DOF,)
-        world.apply_robot_cmd((u + grav).view(1, DOF))
+        world.apply_effort_cmd((u + grav).view(1, DOF))
         world.step()
 
         # ------------------------------------------------------------------

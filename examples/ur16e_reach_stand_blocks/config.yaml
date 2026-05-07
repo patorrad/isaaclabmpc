@@ -13,8 +13,8 @@
 # # Path to the RRT solution JSON that defines the push sequence
 # solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
 
-# # Distance threshold (metres) for declaring a step complete
-# step_threshold: 0.04
+# Distance threshold (metres) for declaring a step complete
+step_threshold: 0.04
 
 # # End-effector body name in the Isaac Lab articulation.
 # # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
@@ -56,7 +56,11 @@
 n_steps: 10000
 
 # World-frame position of the robot base [x, y, z] (metres)
+<<<<<<< HEAD
 robot_init_pos: [0.208, 0.0, 1.775] #1.875] #1.700] #2.075] #1.9] #2.075]
+=======
+robot_init_pos: [0.20, 0.0, 2.075] #1.9] #2.075]
+>>>>>>> main
 
 # Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
 #                              wrist_1, wrist_2, wrist_3
@@ -71,7 +75,12 @@ goal: [0.40, 0.10, 1.00]
 
 # # Path to the RRT solution JSON that defines the push sequence
 # solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
+<<<<<<< HEAD
 solution_path: "/home/jack/research/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution.json"
+=======
+solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/extraction_robot_2.json"
+# solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_sim.json"
+>>>>>>> main
 
 # End-effector body name in the Isaac Lab articulation.
 # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
@@ -111,9 +120,15 @@ mppi:
   num_samples: 1000
   horizon: 24
   device: "cuda:0"
+<<<<<<< HEAD
   u_min: [-0.7]
   u_max: [0.7]
   lambda_: 0.05
+=======
+  u_min: [-0.2]
+  u_max: [0.2]
+  lambda_: 0.5
+>>>>>>> main
   noise_sigma:
     - [0.2, 0.0,  0.0,  0.0,  0.0,  0.0]
     - [0.0,  0.2, 0.0,  0.0,  0.0,  0.0]

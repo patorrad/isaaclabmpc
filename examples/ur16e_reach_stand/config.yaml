@@ -3,6 +3,14 @@
 
 n_steps: 10000
 
+# World-frame position of the robot base [x, y, z] (metres)
+robot_init_pos: [0.208, 0.0, 2.075] #1.9] #2.075]
+
+# Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
+#                              wrist_1, wrist_2, wrist_3
+robot_init_joints: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275]
+
+
 # State dimension: 6 joint positions + 6 joint velocities
 nx: 12
 
@@ -22,16 +30,16 @@ mppi:
   num_samples: 750
   horizon: 24
   device: "cuda:0"
-  u_min: [-0.5]
-  u_max: [0.5]
-  lambda_: 0.1
+  u_min: [-0.2]
+  u_max: [0.2]
+  lambda_: 0.5
   noise_sigma:
-    - [0.01, 0.0,  0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.01, 0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.0,  0.01, 0.0,  0.0,  0.0]
-    - [0.0,  0.0,  0.0,  0.01, 0.0,  0.0]
-    - [0.0,  0.0,  0.0,  0.0,  0.01, 0.0]
-    - [0.0,  0.0,  0.0,  0.0,  0.0,  0.01]
+    - [0.1, 0.0,  0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.1, 0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.1, 0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.0,  0.1, 0.0,  0.0]
+    - [0.0,  0.0,  0.0,  0.0,  0.1, 0.0]
+    - [0.0,  0.0,  0.0,  0.0,  0.0,  0.1]
   rollout_var_discount: 0.95
   update_cov: false
   sample_null_action: true
@@ -41,7 +49,7 @@ mppi:
 
 # Isaac Lab physics parameters
 isaaclab:
-  dt: 0.016667 # 0.0035
+  dt: 0.02 #16667 # 0.0035
   visualize_rollouts: true
   # Table is 2.5m in Y — envs must be spaced far enough that tables don't overlap.
   # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m

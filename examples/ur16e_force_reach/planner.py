@@ -58,43 +58,15 @@ if _PROJECT_ROOT not in sys.path:
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
 from isaaclab.sensors import ContactSensorCfg
+from isaaclab.sim import RigidBodyPropertiesCfg
 
 from mppi_torch.mppi import MPPIConfig
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import UR16E_CFG
+from robots.ur16e import make_ur16e_cfg
 
+from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 
-# ===========================================================================
-# 3. Robot config — effort (torque) control mode
-# ===========================================================================
-
-# Switch the actuator from velocity-tracking (damping=200) to effort mode:
-# stiffness=0 means no position spring; damping=10 provides a passive velocity
-# damper that prevents oscillation without fighting the MPPI torques.
-# activate_contact_sensors enables PhysX contact reporting on all rigid bodies.
-UR16E_EFFORT_CFG = UR16E_CFG.replace(
-    spawn=UR16E_CFG.spawn.replace(
-        rigid_props=sim_utils.RigidBodyPropertiesCfg(
-            disable_gravity=False,
-            max_depenetration_velocity=5.0,
-            enable_gyroscopic_forces=True,
-        ),
-        activate_contact_sensors=True,
-    ),
-    actuators={
-        "arm": ImplicitActuatorCfg(
-            joint_names_expr=[".*_joint"],
-            effort_limit_sim=330.0,
-            velocity_limit_sim=3.14,
-            stiffness=0.0,   # no position spring — pure effort control
-            damping=10.0,    # passive damping to prevent oscillation [Nm/(rad/s)]
-        ),
-    },
-)
-
-# Contact sensor placed at the wrist flange — mirrors the built-in 6-axis F/T
-# sensor on the UR16e e-Series.
 WRIST_CONTACT_SENSOR = ContactSensorCfg(
     prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
     update_period=0.0,
@@ -126,6 +98,8 @@ class PlannerConfig:
     nx: int = 12
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
+    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
+    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     weights: WeightsCfg = field(default_factory=WeightsCfg)
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
@@ -136,10 +110,12 @@ def _load_config(yaml_path: str) -> PlannerConfig:
         raw = yaml.safe_load(f)
 
     cfg = PlannerConfig()
-    cfg.n_steps      = raw.get("n_steps",      cfg.n_steps)
-    cfg.nx           = raw.get("nx",           cfg.nx)
-    cfg.goal         = raw.get("goal",         cfg.goal)
-    cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.n_steps           = raw.get("n_steps",           cfg.n_steps)
+    cfg.nx                = raw.get("nx",                cfg.nx)
+    cfg.goal              = raw.get("goal",              cfg.goal)
+    cfg.ee_link_name      = raw.get("ee_link_name",      cfg.ee_link_name)
+    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
+    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
 
     if "weights" in raw:
         w = raw["weights"]
@@ -245,7 +221,7 @@ class ForceReachPlanner(MPPIIsaacLabPlanner):
         The effective torque applied is u + gravity_compensation.
         """
         grav = self.sim.get_gravity_torques()   # (num_envs, DOF)
-        self.sim.apply_robot_cmd(u + grav)
+        self.sim.apply_effort_cmd(u + grav)
         self.sim.step()
         return (self._state_ph, u)
 
@@ -281,6 +257,11 @@ class ForceReachPlanner(MPPIIsaacLabPlanner):
             object_states.append((pos, quat))
             offset += 7
 
+        if object_states:
+            self._latest_object_states = object_states
+        elif self._latest_object_states:
+            object_states = self._latest_object_states
+
         self.sim.reset_to_state(q, dq, object_states=object_states if object_states else None)
 
         # Run MPPI optimisation (torque space)
@@ -295,6 +276,41 @@ class ForceReachPlanner(MPPIIsaacLabPlanner):
         ee_pose = torch.cat([ee_pos, ee_quat]).cpu()
         return torch_to_bytes(ee_pose)
 
+    def compute_torques_tensor(
+        self, dof_state_bytes: bytes, root_state_bytes: bytes
+    ) -> bytes:
+        """RPC entry point for world.py — returns the optimal joint torques (DOF,).
+
+        Same as the base class compute_action_tensor. Used by the world runner
+        which applies torques directly instead of tracking a Cartesian pose.
+        """
+        from isaaclab_mpc.utils.transport import torch_to_bytes
+
+        self._latest_dof_state = dof_state_bytes
+        self.objective.reset()
+
+        dof_state = bytes_to_torch(dof_state_bytes)
+        DOF = self.sim.num_dof
+        q  = dof_state[:DOF].to(self.device, dtype=torch.float32).view(-1)
+        dq = dof_state[DOF:DOF * 2].to(self.device, dtype=torch.float32).view(-1)
+
+        object_states = []
+        offset = DOF * 2
+        while offset + 7 <= dof_state.numel():
+            pos  = dof_state[offset:     offset + 3].to(self.device, dtype=torch.float32)
+            quat = dof_state[offset + 3: offset + 7].to(self.device, dtype=torch.float32)
+            object_states.append((pos, quat))
+            offset += 7
+
+        if object_states:
+            self._latest_object_states = object_states
+        elif self._latest_object_states:
+            object_states = self._latest_object_states
+
+        self.sim.reset_to_state(q, dq, object_states=object_states if object_states else None)
+        torques = self.mppi.command(self._state_ph)
+        return torch_to_bytes(torques.detach().cpu())
+
 
 # ===========================================================================
 # 7. Main
@@ -304,11 +320,32 @@ def main():
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
 
+    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
+    robot_cfg = _base_robot_cfg.replace(
+        spawn=_base_robot_cfg.spawn.replace(
+            rigid_props=RigidBodyPropertiesCfg(
+                disable_gravity=False,  # gravity must be on for gravity-compensation to work
+                max_depenetration_velocity=5.0,
+                enable_gyroscopic_forces=True,
+            ),
+            activate_contact_sensors=True,
+        ),
+        actuators={
+            "arm": ImplicitActuatorCfg(
+                joint_names_expr=[".*_joint"],
+                effort_limit_sim=330.0,
+                velocity_limit_sim=3.14,
+                stiffness=0.0,
+                damping=10.0,
+            ),
+        },
+    )
+
     objective = Objective(cfg.weights)
     planner = ForceReachPlanner(
         cfg,
         objective,
-        robot_cfg=UR16E_EFFORT_CFG,
+        robot_cfg=robot_cfg,
         prior=None,
         contact_sensor_cfgs=[WRIST_CONTACT_SENSOR],
     )

@@ -61,15 +61,52 @@ import threading
 
 import torch
 import zerorpc
+import yaml
+from dataclasses import dataclass, field
+from typing import List
 
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from robots.ur16e import UR16E_CFG
+from robots.ur16e import make_ur16e_cfg
 from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
+
+# ===========================================================================
+# 3. Config
+# ===========================================================================
+
+@dataclass
+class IsaacLabCfg:
+    dt: float = 1.0 / 60.0
+
+@dataclass
+class WorldConfig:
+    n_steps: int = 100000
+    goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
+    ee_link_name: str = "wrist_3_link"
+    isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
+    robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
+    robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
+
+
+def _load_config(yaml_path: str) -> WorldConfig:
+    with open(yaml_path) as f:
+        raw = yaml.safe_load(f)
+    cfg = WorldConfig()
+    cfg.n_steps = raw.get("n_steps", cfg.n_steps)
+    cfg.goal = raw.get("goal", cfg.goal)
+    cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
+    cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+
+    if "isaaclab" in raw:
+        il = raw["isaaclab"]
+        cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
+    return cfg
 
 # ===========================================================================
 # 3. Keyboard goal control
@@ -177,12 +214,27 @@ def main():
     DOF = 6
     dt  = 1.0 / 60.0
 
+    cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    cfg = _load_config(cfg_path)
+
+    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, rot=(0, 1, 0, 0), joint_pos=cfg.robot_init_joints)
+    robot_cfg = _base_robot_cfg.replace(
+        spawn=_base_robot_cfg.spawn.replace(
+            rigid_props=RigidBodyPropertiesCfg(
+                disable_gravity=True,
+                max_depenetration_velocity=5.0,
+                enable_gyroscopic_forces=True,
+            ),
+            activate_contact_sensors=True,
+        )
+    )
+
     # ------------------------------------------------------------------
     # Viewer-only sim: single env, rendered, no physics commands
     # ------------------------------------------------------------------
     world = IsaacLabWrapper(
         cfg=IsaacLabConfig(dt=dt, device="cuda:0", render=True),
-        robot_cfg=UR16E_CFG,
+        robot_cfg=robot_cfg,
         num_envs=1,
         ee_link_name="wrist_3_link",
         goal=[0.4, 0.2, 0.6],
@@ -193,7 +245,7 @@ def main():
 
     GoalController(world._goal, world._goal_lock)
 
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.12])
+    tcp_offset_local = torch.tensor([0.0, 0.0, 0.115])
     vis = RolloutVisualiser(tcp_offset_local)
 
     # ------------------------------------------------------------------
@@ -231,6 +283,7 @@ def main():
         try:
             obj_bytes = planner.get_object_states()
             obj_data  = bytes_to_torch(obj_bytes)
+            print(obj_data)
             if obj_data.numel() >= 7:
                 n = obj_data.numel() // 7
                 for i in range(min(n, len(world.objects))):
@@ -286,6 +339,7 @@ def main():
             f"TCP [{tcp_pos[0]:.3f}, {tcp_pos[1]:.3f}, {tcp_pos[2]:.3f}]  "
             f"{step_label}  "
             f"{elapsed*1000:.0f} ms/step",
+            # f"{obj_data}",
             end="",
             flush=True,
         )
