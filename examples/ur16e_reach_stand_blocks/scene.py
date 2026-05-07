@@ -40,7 +40,7 @@ def make_static_cfgs(stand_urdf: str) -> list:
             self_collision=False,
             joint_drive=None,  # single-link URDF — no joints to drive
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.14)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.160)),
     )
 
     table_cfg = AssetBaseCfg(
