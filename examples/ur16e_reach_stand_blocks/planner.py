@@ -41,6 +41,7 @@ simulation_app = app_launcher.app
 import os
 import sys
 
+import matplotlib.pyplot as plt
 import torch
 import yaml
 import zerorpc
@@ -72,6 +73,7 @@ from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block
 class IsaacLabCfg:
     dt: float = 1.0 / 60.0
     visualize_rollouts: bool = True
+    debug: bool = False
 
 
 @dataclass
@@ -112,6 +114,7 @@ def _load_config(yaml_path: str) -> PlannerConfig:
         cfg.isaaclab = IsaacLabCfg(
             dt=il.get("dt", 1.0 / 60.0),
             visualize_rollouts=il.get("visualize_rollouts", True),
+            debug=il.get("debug", False),
         )
 
     return cfg
@@ -170,7 +173,7 @@ class Objective:
 
     TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.115])
 
-    def __init__(self, cfg: PlannerConfig):
+    def __init__(self, cfg: PlannerConfig, debug: bool = False):
         self.weights = {
             # "robot_to_obj": 30.0,
             # "obj_to_goal":  40.0,
@@ -184,13 +187,20 @@ class Objective:
             # "height_match": 20.0,
             # "push_align":   40.0,
             # "collision":     1.0,
+            # "robot_to_obj":  5.0,
+            # "obj_to_goal":   25.0,
+            # "robot_ori":      5.0,
+            # "height_match":  20.0,
+            # "push_align":    45.0,
+            # "collision":      1.0,
+            # "joint_vel":      2.25, #.25,
             "robot_to_obj":  5.0,
             "obj_to_goal":   25.0,
             "robot_ori":      5.0,
             "height_match":  20.0,
             "push_align":    45.0,
             "collision":      1.0,
-            "joint_vel":      2.25, #.25,
+            "joint_vel":      0.,
         }
         self.step_threshold = cfg.step_threshold
 
@@ -214,6 +224,24 @@ class Objective:
         for name, (idx, pos) in final_poses.items():
             print(f"  {name} (idx {idx}): {pos}")
 
+        self.debug = debug
+        self._debug_term_keys = ["robot_to_obj", "obj_to_goal", "robot_ori",
+                                  "height_match", "push_align", "collision", "joint_vel"]
+        self._debug_last_terms: list = [0.0] * len(self._debug_term_keys)
+        self._debug_capture = False
+        if debug:
+            self._init_debug_plot()
+
+    def _init_debug_plot(self):
+        plt.ion()
+        self._fig, self._ax = plt.subplots(figsize=(9, 4))
+        labels = [f"{k}\n(w={self.weights[k]})" for k in self._debug_term_keys]
+        self._bars = self._ax.bar(labels, [0.0] * len(self._debug_term_keys), color="steelblue")
+        self._ax.set_ylabel("Weighted cost (env 0)")
+        self._ax.set_title("MPPI cost terms")
+        self._fig.tight_layout()
+        plt.show(block=False)
+
     def reset(self):
         """Advance to next step if current block reached its goal."""
         if self._last_obj_pos is not None and self.current_step < len(self.steps):
@@ -229,6 +257,20 @@ class Objective:
                 else:
                     print(f"\n[Step] All {len(self.steps)} steps completed!")
         self._first_call = True
+        self._debug_capture = self.debug
+
+    def update_debug_plot(self):
+        if not self.debug:
+            return
+        for bar, val in zip(self._bars, self._debug_last_terms):
+            bar.set_height(val)
+        self._ax.relim()
+        self._ax.autoscale_view()
+        step_info = (f"Step {self.current_step}/{len(self.steps)}"
+                     if self.current_step < len(self.steps) else "All steps done")
+        self._ax.set_title(f"MPPI cost terms — {step_info}")
+        self._fig.canvas.draw()
+        self._fig.canvas.flush_events()
 
     def compute_cost(self, sim) -> torch.Tensor:
         device = sim.device
@@ -307,6 +349,15 @@ class Objective:
                   height_match, push_align, collision, joint_vel):
             t[torch.isnan(t)] = 100.0
 
+        if self._debug_capture:
+            raw_terms = [robot_to_obj_dist, obj_to_goal_dist, robot_ori,
+                         height_match, push_align, collision, joint_vel]
+            self._debug_last_terms = [
+                (self.weights[k] * t[0]).item()
+                for k, t in zip(self._debug_term_keys, raw_terms)
+            ]
+            self._debug_capture = False
+
         return (
             self.weights["robot_to_obj"] * robot_to_obj_dist
             + self.weights["obj_to_goal"]  * obj_to_goal_dist
@@ -353,7 +404,7 @@ def main():
         )
     )
 
-    objective = Objective(cfg)
+    objective = Objective(cfg, debug=cfg.isaaclab.debug)
     planner = MPPIIsaacLabPlanner(
         cfg,
         objective,
