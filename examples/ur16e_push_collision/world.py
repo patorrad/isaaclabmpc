@@ -68,7 +68,7 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from robots.ur16e import make_ur16e_cfg
+from assets.robots.ur16e import make_ur16e_cfg
 from examples.ur16e_push.box_cfg import make_box_cfg
 
 

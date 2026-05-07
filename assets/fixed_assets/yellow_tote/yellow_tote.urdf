@@ -1,0 +1,59 @@
+<?xml version="1.0" ?>
+<robot name="yellow_tote">
+  <link name="tote_link">
+    <inertial>
+      <mass value="1.0"/>
+      <inertia ixx="0.05" ixy="0.0" ixz="0.0" iyy="0.05" iyz="0.0" izz="0.05"/>
+    </inertial>
+    <!-- Floor -->
+    <visual>
+      <origin rpy="0 0 0" xyz="0.003 -0.05 0.005"/>
+      <geometry><box size="0.6 0.38 0.01"/></geometry>
+      <material name="yellow"><color rgba="0.85 0.73 0.1 1.0"/></material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0.003 -0.05 0.005"/>
+      <geometry><box size="0.6 0.38 0.01"/></geometry>
+    </collision>
+    <!-- Front wall -->
+    <visual>
+      <origin rpy="0 0 0" xyz="0.003 -0.24 0.14"/>
+      <geometry><box size="0.6 0.04 0.28"/></geometry>
+      <material name="yellow"><color rgba="0.85 0.73 0.1 1.0"/></material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0.003 -0.24 0.14"/>
+      <geometry><box size="0.6 0.04 0.28"/></geometry>
+    </collision>
+    <!-- Back wall -->
+    <visual>
+      <origin rpy="0 0 0" xyz="0.003 0.14 0.14"/>
+      <geometry><box size="0.6 0.04 0.28"/></geometry>
+      <material name="yellow"><color rgba="0.85 0.73 0.1 1.0"/></material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0.003 0.14 0.14"/>
+      <geometry><box size="0.6 0.04 0.28"/></geometry>
+    </collision>
+    <!-- Right wall -->
+    <visual>
+      <origin rpy="0 0 0" xyz="0.272 -0.05 0.14"/>
+      <geometry><box size="0.062 0.34 0.28"/></geometry>
+      <material name="yellow"><color rgba="0.85 0.73 0.1 1.0"/></material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0.272 -0.05 0.14"/>
+      <geometry><box size="0.062 0.34 0.28"/></geometry>
+    </collision>
+    <!-- Left wall -->
+    <visual>
+      <origin rpy="0 0 0" xyz="-0.266 -0.05 0.14"/>
+      <geometry><box size="0.062 0.34 0.28"/></geometry>
+      <material name="yellow"><color rgba="0.85 0.73 0.1 1.0"/></material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="-0.266 -0.05 0.14"/>
+      <geometry><box size="0.062 0.34 0.28"/></geometry>
+    </collision>
+  </link>
+</robot>

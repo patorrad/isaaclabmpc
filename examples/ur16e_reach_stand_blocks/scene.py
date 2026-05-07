@@ -29,12 +29,12 @@ _BLOCK_SPECS = [
 ]
 
 
-def make_static_cfgs() -> list:
+def make_static_cfgs(stand_urdf: str) -> list:
     """Build AssetBaseCfg entries for the stand (URDF) and table (box)."""
     stand_cfg = AssetBaseCfg(
         prim_path="PLACEHOLDER",  # replaced by _make_scene_cfg
         spawn=sim_utils.UrdfFileCfg(
-            asset_path=_STAND_URDF,
+            asset_path=stand_urdf,
             fix_base=True,
             merge_fixed_joints=True,
             self_collision=False,

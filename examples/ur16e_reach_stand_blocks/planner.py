@@ -78,6 +78,7 @@ class PlannerConfig:
     ee_link_name: str = "wrist_3_link"
     solution_path: str = "solution_obs_3_simple_extraction_robot.json"
     step_threshold: float = 0.02
+    stand_urdf: str = ""
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
@@ -95,6 +96,7 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.ee_link_name    = raw.get("ee_link_name",    cfg.ee_link_name)
     cfg.solution_path   = raw.get("solution_path",   cfg.solution_path)
     cfg.step_threshold  = raw.get("step_threshold",  cfg.step_threshold)
+    cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
 
@@ -346,7 +348,7 @@ def main():
         robot_cfg=robot_cfg,
         prior=None,
         object_cfgs=make_block_cfgs(),
-        static_cfgs=make_static_cfgs(),
+        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
         contact_sensor_cfgs=[robot_contact_sensor],
     )
 

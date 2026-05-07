@@ -65,7 +65,7 @@ if _PROJECT_ROOT not in sys.path:
 
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from robots.ur16e import UR16E_CFG
+from assets.robots.ur16e import UR16E_CFG
 
 
 # ===========================================================================

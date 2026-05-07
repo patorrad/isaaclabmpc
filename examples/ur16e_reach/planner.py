@@ -52,7 +52,7 @@ if _PROJECT_ROOT not in sys.path:
 from mppi_torch.mppi import MPPIConfig
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import UR16E_CFG
+from assets.robots.ur16e import UR16E_CFG
 
 
 # ===========================================================================

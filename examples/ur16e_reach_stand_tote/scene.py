@@ -10,8 +10,6 @@ from isaaclab.sim.converters import UrdfConverterCfg
 
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 
-from robots import STAND_URDF_PATH as _STAND_URDF
-
 # All puzzle blocks are 8 cm cubes, 1 kg
 _BLOCK_SIZE = (0.05, 0.05, 0.05)
 _BLOCK_MASS = 0.2
@@ -51,7 +49,15 @@ def make_static_cfgs(stand_urdf: str) -> list:
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 0.65)),
     )
 
-    return [stand_cfg, table_cfg]
+    tote_cfg = AssetBaseCfg(
+        prim_path="PLACEHOLDER",  # replaced by _make_scene_cfg
+        spawn=sim_utils.UsdFileCfg(
+            usd_path='/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/yellow_tote/model.usd',
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.4, 0.0, 0.8)),
+    )
+
+    return [stand_cfg, table_cfg, tote_cfg]
 
 def make_block_cfgs() -> list:
     """Build RigidObjectCfg entries for the four puzzle blocks.

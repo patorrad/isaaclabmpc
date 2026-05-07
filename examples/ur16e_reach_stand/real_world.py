@@ -72,7 +72,7 @@ if _PROJECT_ROOT not in sys.path:
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from robots.ur16e import make_ur16e_cfg
+from assets.robots.ur16e import make_ur16e_cfg
 from examples.ur16e_reach_stand.scene import make_static_cfgs, make_block_cfgs
 
 # ===========================================================================
@@ -88,6 +88,7 @@ class WorldConfig:
     n_steps: int = 100000
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
+    stand_urdf: str = ""
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
@@ -100,6 +101,7 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.n_steps = raw.get("n_steps", cfg.n_steps)
     cfg.goal = raw.get("goal", cfg.goal)
     cfg.ee_link_name = raw.get("ee_link_name", cfg.ee_link_name)
+    cfg.stand_urdf        = raw.get("stand_urdf",        cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
 
@@ -238,7 +240,7 @@ def main():
         ee_link_name="wrist_3_link",
         goal=[0.40, 0.10, 0.92],
         # object_cfgs=make_block_cfgs(),
-        static_cfgs=make_static_cfgs(),
+        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
     )
     device = world.device
 

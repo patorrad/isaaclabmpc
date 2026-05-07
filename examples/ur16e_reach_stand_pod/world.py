@@ -67,7 +67,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_reach_stand_pod.scene import make_static_cfgs, make_block_cfgs, _POD_SHELVES_URDF
 
 
 # ===========================================================================
@@ -84,8 +84,8 @@ class WorldConfig:
     n_steps: int = 100000
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
-    isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     stand_urdf: str = ""
+    isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
 
@@ -264,7 +264,7 @@ def main():
     headless = getattr(args_cli, "headless", False)
     n_rollouts_draw = 0 if headless else args_cli.n_rollouts_draw
 
-    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
+    _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, rot=(0, 1, 0, 0), joint_pos=cfg.robot_init_joints)
     robot_cfg = _base_robot_cfg.replace(
         spawn=_base_robot_cfg.spawn.replace(
             rigid_props=RigidBodyPropertiesCfg(
@@ -289,8 +289,8 @@ def main():
         num_envs=1,
         ee_link_name=cfg.ee_link_name,
         goal=cfg.goal,
-        object_cfgs=make_block_cfgs(),
-        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
+        # object_cfgs=make_block_cfgs(),
+        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf, pod_urdf=_POD_SHELVES_URDF),
     )
     device = world.device
     DOF = world.num_dof
@@ -331,28 +331,27 @@ def main():
             break
 
         # ------------------------------------------------------------------
-        # 1. Call MPPI planner — returns optimal joint-velocity command
-        #    Append block states [pos(3), quat(4)] × 4 so the planner can
-        #    reset parallel envs to the current real block positions.
+        # 1. Sync current goal to planner
         # ------------------------------------------------------------------
-        block_states = []
-        for i in range(len(world.objects)):
-            pos  = world.get_object_pos(i)[0]   # (3,)
-            quat = world.get_object_quat(i)[0]  # (4,) w,x,y,z
-            block_states.append(pos)
-            block_states.append(quat)
-        dof_state = torch.cat([q, dq] + block_states)
+        with world._goal_lock:
+            goal_now = world._goal.clone()
+        planner.set_goal(torch_to_bytes(goal_now.cpu()))
+        print(goal_now)
+
+        # ------------------------------------------------------------------
+        # 2. Call MPPI planner — returns optimal joint-velocity command
+        # ------------------------------------------------------------------
+        dof_state = torch.cat([q, dq]).cpu()
         u_bytes = planner.compute_action_tensor(torch_to_bytes(dof_state), b"")
         u = bytes_to_torch(u_bytes).to(device)   # (DOF,)
 
         # ------------------------------------------------------------------
-        # 2. Visualise rollouts + goal (before stepping so viewer is current)
+        # 3. Visualise rollouts + goal (before stepping so viewer is current)
         # ------------------------------------------------------------------
         if vis is not None:
             rollout_bytes = planner.get_rollouts()
             origin = world.scene.env_origins[0]
             ee_quat = world.get_ee_quat()[0]      # (4,) w,x,y,z world frame
-            goal_now = bytes_to_torch(planner.get_current_goal_pos())
             vis.update(rollout_bytes, goal_now, ee_quat, origin, n_rollouts_draw)
 
         # ------------------------------------------------------------------
@@ -369,21 +368,23 @@ def main():
         ee_pos = world.get_ee_pos()[0]            # (3,) local frame
 
         # ------------------------------------------------------------------
-        # 6. Logging — show TCP tip distance to current block goal
+        # 6. Logging
         # ------------------------------------------------------------------
-        try:
-            step_info = bytes_to_torch(planner.get_current_step()).item()
-            total_steps = bytes_to_torch(planner.get_total_steps()).item()
-            step_label = f"step {int(step_info)}/{int(total_steps)}"
-        except Exception:
-            step_label = ""
+        dist = torch.linalg.norm(ee_pos - goal_now).item()
+        ee_pos  = world.get_ee_pos()   # (num_envs, 3)
+        ee_quat = world.get_ee_quat()  # (num_envs, 4)
+        goal    = world.get_goal()     # (3,)
 
+        tcp_pos = ee_pos + _quat_apply(ee_quat, tcp_offset_local)  # (num_envs, 3)
+
+        dist = torch.linalg.norm(tcp_pos - goal.unsqueeze(0), dim=1, ord=1)
         elapsed = time.time() - t_prev
         t_prev = time.time()
         print(
-            f"\r[{step:05d}] "
-            f"EE [{ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}]  "
-            f"{step_label}  "
+            # f"\r[{step:05d}] "
+            # f"EE [{ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}]  "
+            # f"goal [{goal_now[0]:.2f}, {goal_now[1]:.2f}, {goal_now[2]:.2f}]  "
+            f"dist {dist[0].item():.4f} m  "
             f"{elapsed*1000:.0f} ms/step",
             end="",
             flush=True,

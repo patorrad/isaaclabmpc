@@ -63,7 +63,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from mppi_torch.mppi import MPPIConfig
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import make_ur16e_cfg
+from assets.robots.ur16e import make_ur16e_cfg
 
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 

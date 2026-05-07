@@ -10,8 +10,6 @@ from isaaclab.sim.converters import UrdfConverterCfg
 
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 
-from robots import STAND_URDF_PATH as _STAND_URDF
-
 # All puzzle blocks are 8 cm cubes, 1 kg
 _BLOCK_SIZE = (0.05, 0.05, 0.05)
 _BLOCK_MASS = 0.2
@@ -25,7 +23,10 @@ _BLOCK_SPECS = [
     ([0.6095, -0.0735, 0.8], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
 ]
 
-def make_static_cfgs(stand_urdf: str) -> list:
+_POD_URDF = '/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/pod/pod.urdf'
+_POD_SHELVES_URDF = '/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/pod/pod_shelves.urdf'
+
+def make_static_cfgs(stand_urdf: str, include_pod: bool = True, pod_urdf: str = _POD_URDF) -> list:
     """Build AssetBaseCfg entries for the stand (URDF) and table (box)."""
     stand_cfg = AssetBaseCfg(
         prim_path="PLACEHOLDER",  # replaced by _make_scene_cfg
@@ -51,6 +52,24 @@ def make_static_cfgs(stand_urdf: str) -> list:
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 0.65)),
     )
 
+    pod_cfg = AssetBaseCfg(
+        prim_path="PLACEHOLDER",  # replaced by _make_scene_cfg
+        spawn=sim_utils.UrdfFileCfg(
+            asset_path=pod_urdf,
+            fix_base=True,
+            merge_fixed_joints=True,
+            self_collision=False,
+            joint_drive=None,  # single-link URDF — no joints to drive
+        ),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.8, 0.23495, 0.), rot=(0.707, 0, 0, -0.707)),
+    )
+    # import math
+    # angle = math.pi / 2   # 90°
+    # rot = (math.cos(angle/2), 0.0, 0.0, math.sin(angle/2))  # around Z
+
+
+    if include_pod:
+        return [stand_cfg, table_cfg, pod_cfg]
     return [stand_cfg, table_cfg]
 
 def make_block_cfgs() -> list:

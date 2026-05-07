@@ -70,7 +70,7 @@ nx: 12
 goal: [0.40, 0.10, 0.92]
 
 # # Path to the RRT solution JSON that defines the push sequence
-solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks_sim_2/extraction_robot_sim.json"
+solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks_sim/extraction_robot_sim.json"
 
 # End-effector body name in the Isaac Lab articulation.
 # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
@@ -108,3 +108,4 @@ isaaclab:
   # Table is 2.5m in Y — envs must be spaced far enough that tables don't overlap.
   # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m
   env_spacing: 3.0
+stand_urdf: "/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/stand/stand.urdf"

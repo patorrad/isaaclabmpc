@@ -54,7 +54,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
 from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_reach_stand_pod.scene import make_static_cfgs, make_block_cfgs, _POD_SHELVES_URDF
 
 
 # ===========================================================================
@@ -140,7 +140,7 @@ def _quat_to_euler_zyx(q: torch.Tensor) -> torch.Tensor:
     return torch.stack([yaw, pitch, roll], dim=1)  # (N, 3)
 
 
-_ORI_TARGET_ZYX = torch.tensor([0.0, 0.0, torch.pi])
+_ORI_TARGET_ZYX = torch.tensor([0.0, torch.pi / 2, 0.0])
 
 
 class Objective:
@@ -215,7 +215,7 @@ def main():
         robot_cfg=robot_cfg,
         prior=None,
         # object_cfgs=make_block_cfgs(),
-        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
+        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf, pod_urdf=_POD_SHELVES_URDF),
     )
 
     server = zerorpc.Server(planner)
