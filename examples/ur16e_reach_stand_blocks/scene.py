@@ -28,6 +28,28 @@ _BLOCK_SPECS = [
     # ([0.3095, -0.1735, 0.8], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
 ]
 
+# Obstacle colour cycle used when loading from a scenario file.
+_OBSTACLE_COLORS = [
+    (0.3, 0.5, 0.9),  # blue
+    (0.3, 0.9, 0.2),  # green
+    (0.9, 0.9, 0.2),  # yellow
+    (0.9, 0.5, 0.2),  # orange
+]
+
+
+def _bin_to_mppi_local(bin_pos: list) -> list:
+    """Convert bin-frame [x, y, z] to MPPI scene-local frame.
+
+    Matches puzzles/main.py:_bin_to_mppi_local() — keep in sync.
+    Verified against the four hardcoded positions in _BLOCK_SPECS.
+    """
+    x, y, z = bin_pos
+    return [
+        y + 0.10,
+        (x - 0.15) + 0.10 * (1.0 if x >= 0.15 else -1.0),
+        z + 0.810,
+    ]
+
 
 def make_static_cfgs(stand_urdf: str) -> list:
     """Build AssetBaseCfg entries for the stand (URDF) and table (box)."""
@@ -58,13 +80,25 @@ def make_static_cfgs(stand_urdf: str) -> list:
     return [stand_cfg, table_cfg]
 
 
-def make_block_cfgs() -> list:
-    """Build RigidObjectCfg entries for the four puzzle blocks.
+def make_block_cfgs(positions: list | None = None) -> list:
+    """Build RigidObjectCfg entries for the puzzle blocks.
 
-    Returns a list ordered by obj_idx so it maps directly to the solution JSON.
+    Parameters
+    ----------
+    positions : list of [x, y, z] in MPPI local frame, ordered [target, obs_0, ...].
+        If None, uses hardcoded _BLOCK_SPECS (backwards compatible).
+        Convert from bin frame first via _bin_to_mppi_local() if needed.
     """
+    if positions is None:
+        specs = _BLOCK_SPECS
+    else:
+        target_color = (0.9, 0.2, 0.2)
+        specs = [
+            (pos, target_color if i == 0 else _OBSTACLE_COLORS[(i - 1) % len(_OBSTACLE_COLORS)])
+            for i, pos in enumerate(positions)
+        ]
     cfgs = []
-    for init_pos, color in _BLOCK_SPECS:
+    for init_pos, color in specs:
         cfgs.append(RigidObjectCfg(
             prim_path="PLACEHOLDER",  # replaced by IsaacLabWrapper
             spawn=sim_utils.CuboidCfg(
