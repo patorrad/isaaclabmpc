@@ -1,20 +1,76 @@
+# # Configuration for ur16e_reach example
+# # Mirrors the structure of genesismpc's config_ur.yaml
+
+# n_steps: 10000
+
+# # State dimension: 6 joint positions + 6 joint velocities
+# nx: 12
+
+# # Initial goal position (unused at runtime — objective drives the goal from the
+# # solution JSON, but world.py uses this as the starting viewer goal marker).
+# goal: [0.40, 0.10, 0.92]
+
+# # Path to the RRT solution JSON that defines the push sequence
+# solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
+
+# Distance threshold (metres) for declaring a step complete
+step_threshold: 0.04
+
+# # End-effector body name in the Isaac Lab articulation.
+# # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
+# # into wrist_3_link, so we reference wrist_3_link here.
+# ee_link_name: "wrist_3_link"
+
+# # MPPI parameters (mirrors genesismpc conf/mppi/ur5_stick_stacked.yaml)
+# mppi:
+#   mppi_mode: "halton-spline"
+#   sampling_method: "halton"
+#   num_samples: 1000
+#   horizon: 24
+#   device: "cuda:0"
+#   u_min: [-0.05]
+#   u_max: [0.05]
+#   lambda_: 1.0
+#   noise_sigma:
+#     - [0.1, 0.0,  0.0,  0.0,  0.0,  0.0]
+#     - [0.0,  0.1, 0.0,  0.0,  0.0,  0.0]
+#     - [0.0,  0.0,  0.1, 0.0,  0.0,  0.0]
+#     - [0.0,  0.0,  0.0,  0.1, 0.0,  0.0]
+#     - [0.0,  0.0,  0.0,  0.0,  0.1, 0.0]
+#     - [0.0,  0.0,  0.0,  0.0,  0.0,  0.1]
+#   rollout_var_discount: 0.95
+#   update_cov: false
+#   sample_null_action: true
+#   filter_u: true
+#   use_priors: false
+#   seed_val: 0
+
+# # Isaac Lab physics parameters
+# isaaclab:
+#   dt: 0.005
+#   visualize_rollouts: true
+
 # Configuration for ur16e_reach example
 # Mirrors the structure of genesismpc's config_ur.yaml
 
 n_steps: 10000
 
+# World-frame position of the robot base [x, y, z] (metres)
+robot_init_pos: [0.20, 0.0, 2.075] #1.9] #2.075]
+
+# Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
+#                              wrist_1, wrist_2, wrist_3
+robot_init_joints: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275]
+
 # State dimension: 6 joint positions + 6 joint velocities
 nx: 12
 
-# Initial goal position (unused at runtime — objective drives the goal from the
-# solution JSON, but world.py uses this as the starting viewer goal marker).
+# Initial goal position in world frame [x, y, z]  (metres)
+# Adjust to a reachable pose for the UR16e home configuration
 goal: [0.40, 0.10, 0.92]
 
-# Path to the RRT solution JSON that defines the push sequence
-solution_path: "/home/paolo/Documents/puzzle/solution_obs_3_simple_extraction_robot.json"
-
-# Distance threshold (metres) for declaring a step complete
-step_threshold: 0.04
+# # Path to the RRT solution JSON that defines the push sequence
+solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks_sim_2/extraction_robot_sim.json"
 
 # End-effector body name in the Isaac Lab articulation.
 # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
@@ -25,19 +81,19 @@ ee_link_name: "wrist_3_link"
 mppi:
   mppi_mode: "halton-spline"
   sampling_method: "halton"
-  num_samples: 750
-  horizon: 12
+  num_samples: 1000
+  horizon: 18
   device: "cuda:0"
-  u_min: [-0.5]
-  u_max: [0.5]
-  lambda_: 0.1
+  u_min: [-0.7]
+  u_max: [0.7]
+  lambda_: 0.05
   noise_sigma:
-    - [0.01, 0.0,  0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.01, 0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.0,  0.01, 0.0,  0.0,  0.0]
-    - [0.0,  0.0,  0.0,  0.01, 0.0,  0.0]
-    - [0.0,  0.0,  0.0,  0.0,  0.01, 0.0]
-    - [0.0,  0.0,  0.0,  0.0,  0.0,  0.01]
+    - [0.2, 0.0,  0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.2, 0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.2, 0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.0,  0.1, 0.0,  0.0]
+    - [0.0,  0.0,  0.0,  0.0,  0.1, 0.0]
+    - [0.0,  0.0,  0.0,  0.0,  0.0,  0.1]
   rollout_var_discount: 0.95
   update_cov: false
   sample_null_action: true
@@ -47,5 +103,8 @@ mppi:
 
 # Isaac Lab physics parameters
 isaaclab:
-  dt: 0.016667    # 1/60 s
+  dt: 0.016667 #0.0035
   visualize_rollouts: true
+  # Table is 2.5m in Y — envs must be spaced far enough that tables don't overlap.
+  # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m
+  env_spacing: 3.0

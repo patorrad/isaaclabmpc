@@ -210,9 +210,16 @@ class MPPIIsaacLabPlanner:
             object_states.append((pos, quat))
             offset += 7
 
-        if not object_states and self._latest_object_states:
+        if object_states:
+            self._latest_object_states = object_states
+        elif self._latest_object_states:
             object_states = self._latest_object_states
+
         self.sim.reset_to_state(q, dq, object_states=object_states if object_states else None)
+
+        # for i in range(len(self.sim.objects)):
+        #     print(f"[sim] obj {i}: pos={self.sim.get_object_pos(i)[0].tolist()}")
+
         return self._command()
 
     def _command(self) -> bytes:

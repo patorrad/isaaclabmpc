@@ -13,8 +13,8 @@
 # # Path to the RRT solution JSON that defines the push sequence
 # solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
 
-# # Distance threshold (metres) for declaring a step complete
-# step_threshold: 0.04
+# Distance threshold (metres) for declaring a step complete
+step_threshold: 0.04
 
 # # End-effector body name in the Isaac Lab articulation.
 # # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
@@ -56,7 +56,7 @@
 n_steps: 10000
 
 # World-frame position of the robot base [x, y, z] (metres)
-robot_init_pos: [0.208, 0.0, 2.075] #1.9] #2.075]
+robot_init_pos: [0.20, 0.0, 2.075] #1.9] #2.075]
 
 # Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
 #                              wrist_1, wrist_2, wrist_3
@@ -71,7 +71,8 @@ goal: [0.40, 0.10, 0.92]
 
 # # Path to the RRT solution JSON that defines the push sequence
 # solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
-solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction.json"
+solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/extraction_robot_2.json"
+# solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_sim.json"
 
 # End-effector body name in the Isaac Lab articulation.
 # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
@@ -83,15 +84,15 @@ mppi:
   mppi_mode: "halton-spline"
   sampling_method: "halton"
   num_samples: 1000
-  horizon: 12
+  horizon: 24
   device: "cuda:0"
   u_min: [-0.2]
   u_max: [0.2]
-  lambda_: 0.05
+  lambda_: 0.5
   noise_sigma:
-    - [0.1, 0.0,  0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.1, 0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.0,  0.1, 0.0,  0.0,  0.0]
+    - [0.2, 0.0,  0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.2, 0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.2, 0.0,  0.0,  0.0]
     - [0.0,  0.0,  0.0,  0.1, 0.0,  0.0]
     - [0.0,  0.0,  0.0,  0.0,  0.1, 0.0]
     - [0.0,  0.0,  0.0,  0.0,  0.0,  0.1]
