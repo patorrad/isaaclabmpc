@@ -201,6 +201,7 @@ class Objective:
             "push_align":    45.0,
             "collision":      1.0,
             "joint_vel":      0.,
+            "singularity":    0.05,  # reciprocal manipulability; tune up to penalise near-singular configs
         }
         self.step_threshold = cfg.step_threshold
 
@@ -226,7 +227,8 @@ class Objective:
 
         self.debug = debug
         self._debug_term_keys = ["robot_to_obj", "obj_to_goal", "robot_ori",
-                                  "height_match", "push_align", "collision", "joint_vel"]
+                                  "height_match", "push_align", "collision", "joint_vel",
+                                  "singularity"]
         self._debug_last_terms: list = [0.0] * len(self._debug_term_keys)
         self._debug_capture = False
         if debug:
@@ -345,13 +347,19 @@ class Objective:
 
         joint_vel = torch.linalg.norm(sim.get_joint_vel(), dim=1)  # (num_envs,)
 
+        J = sim.get_ee_jacobian()                          # (num_envs, 6, 6)
+        det_J = torch.abs(torch.linalg.det(J))             # (num_envs,)
+        singularity = 1.0 / (det_J + 1e-6)                # (num_envs,); large near singularity
+
         for t in (robot_to_obj_dist, obj_to_goal_dist, robot_ori,
-                  height_match, push_align, collision, joint_vel):
+                  height_match, push_align, collision, joint_vel,
+                  singularity):
             t[torch.isnan(t)] = 100.0
 
         if self._debug_capture:
             raw_terms = [robot_to_obj_dist, obj_to_goal_dist, robot_ori,
-                         height_match, push_align, collision, joint_vel]
+                         height_match, push_align, collision, joint_vel,
+                         singularity]
             self._debug_last_terms = [
                 (self.weights[k] * t[0]).item()
                 for k, t in zip(self._debug_term_keys, raw_terms)
@@ -359,13 +367,14 @@ class Objective:
             self._debug_capture = False
 
         return (
-            self.weights["robot_to_obj"] * robot_to_obj_dist
-            + self.weights["obj_to_goal"]  * obj_to_goal_dist
-            + self.weights["robot_ori"]    * robot_ori
-            + self.weights["push_align"]   * push_align
-            + self.weights["height_match"] * height_match
-            + self.weights["collision"]    * collision
-            + self.weights["joint_vel"]    * joint_vel
+            self.weights["robot_to_obj"]  * robot_to_obj_dist
+            + self.weights["obj_to_goal"]   * obj_to_goal_dist
+            + self.weights["robot_ori"]     * robot_ori
+            + self.weights["push_align"]    * push_align
+            + self.weights["height_match"]  * height_match
+            + self.weights["collision"]     * collision
+            + self.weights["joint_vel"]     * joint_vel
+            + self.weights["singularity"]   * singularity
         )
 
 
