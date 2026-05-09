@@ -1,0 +1,45 @@
+# Configuration for ur16e_push_stick — UR5e variant.
+#
+# Uses the same push scene (table, red block, green goal) but with a UR5e
+# so that pi0.5 inference uses the ur5e norm stats it was pre-trained on.
+#
+# Run:
+#   Terminal 1 (openpi env):
+#     python scripts/serve_policy.py policy:checkpoint \
+#       --policy.config pi05_ur16e_push \
+#       --policy.dir ~/.cache/openpi/openpi-assets/checkpoints/pi05_base \
+#       --port 8000
+#
+#   Terminal 2 (isaaclab env):
+#     python examples/ur16e_push_stick_pi05/world.py --robot ur5e
+
+n_steps: 5000
+
+# UR5e base mounted upright on the table surface (z=0.72).
+# Adjust x/y so the EE reaches the push object at (0.55, 0.0, 0.80).
+# Start at x=0 (behind the object) — tune if the arm can't reach.
+robot_init_pos: [0.0, 0.0, 0.72]
+
+# Initial joints near the centre of the ur5e training distribution
+# (from pi05_base/assets/ur5e/norm_stats.json state mean).
+robot_init_joints: [2.82, -1.63, 0.44, -1.54, -0.39, 0.18]
+
+ee_link_name: "wrist_3_link"
+
+# No tall stand — UR5e sits directly on the table surface.
+stand_urdf: ""
+
+# ── pi0.5 policy server ───────────────────────────────────────────────────────
+pi05:
+  host: "localhost"
+  port: 8000
+  language_instruction: "pick the red block"
+  action_execute: 5
+  # ur5e norm stats: action std ~0.28 rad — scale 1.0 gives full-scale motion.
+  action_scale: 1.0
+  ee_lambda: 0.05
+
+# ── Isaac Lab physics ─────────────────────────────────────────────────────────
+isaaclab:
+  dt: 0.02
+  env_spacing: 3.0

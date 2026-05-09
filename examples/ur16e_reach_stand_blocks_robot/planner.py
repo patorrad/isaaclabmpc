@@ -94,9 +94,9 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.nx              = raw.get("nx",              cfg.nx)
     cfg.goal            = raw.get("goal",            cfg.goal)
     cfg.ee_link_name    = raw.get("ee_link_name",    cfg.ee_link_name)
+    cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
     cfg.solution_path   = raw.get("solution_path",   cfg.solution_path)
     cfg.step_threshold  = raw.get("step_threshold",  cfg.step_threshold)
-    cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
 
@@ -168,13 +168,25 @@ class Objective:
 
     def __init__(self, cfg: PlannerConfig):
         self.weights = {
+            # "robot_to_obj": 30.0,
+            # "obj_to_goal":  40.0,
+            # "robot_ori":    10.0,
+            # "push_align":   20.0,
+            # "height_match": 20.0,
+            # "collision":     2.0,
+            # "robot_to_obj": 30.0,
+            # "obj_to_goal":  40.0,
+            # "robot_ori":     15.0,
+            # "height_match": 20.0,
+            # "push_align":   40.0,
+            # "collision":     1.0,
             "robot_to_obj":  5.0,
             "obj_to_goal":   25.0,
             "robot_ori":      5.0,
             "height_match":  20.0,
             "push_align":    45.0,
             "collision":      1.0,
-            "joint_vel":      0.,
+            "joint_vel":      2.25, #.25,
         }
         self.step_threshold = cfg.step_threshold
 
@@ -217,6 +229,18 @@ class Objective:
     def compute_cost(self, sim) -> torch.Tensor:
         device = sim.device
 
+        # if not self._printed_initial_poses:
+        #     print("[Objective] Initial object poses in simulation (env 0):")
+        #     for i in range(len(self.steps)):
+        #         obj_idx = self.steps[i]["obj_idx"]
+        #         pos = sim.get_object_pos(obj_idx)[0].tolist()
+        #         print(f"  {self.steps[i]['obj_name']} (idx {obj_idx}): {[round(v,4) for v in pos]}")
+        #     self._printed_initial_poses = True
+        # [Objective] Initial object poses in simulation (env 0):
+        #             obstacle_2 (idx 3): [0.6095, -0.0735, 0.595]
+        #             obstacle_0 (idx 1): [0.4825, 0.0874, 0.595]
+        #             target (idx 0): [0.6127, 0.0797, 0.595]
+        #             target (idx 0): [0.6127, 0.0797, 0.595]
         # TCP tip position
         ee_pos  = sim.get_ee_pos()   # (num_envs, 3)
         ee_quat = sim.get_ee_quat()  # (num_envs, 4)
@@ -231,10 +255,12 @@ class Objective:
         obj_idx  = step["obj_idx"]
         goal_pos = torch.tensor(step["end_pos"], dtype=torch.float32, device=device)
         sim.set_goal(goal_pos)
-        
+
         obj_pos = sim.get_object_pos(obj_idx)  # (num_envs, 3)
         # import pdb; pdb.set_trace()
-        print(f'{obj_idx} {obj_pos[0, :]}')
+        # obj_pos = sim.get_object_states
+        # print(f'{obj_idx} {obj_pos[0, :]}')
+        # print(sim.get_object_states())
 
         # Cache real object position (env 0) for step-advance check in reset()
         if self._first_call:

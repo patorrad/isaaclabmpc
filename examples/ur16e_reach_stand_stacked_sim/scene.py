@@ -13,8 +13,6 @@ Block index → puzzle role (matches solution JSON obj_idx):
 import isaaclab.sim as sim_utils
 from isaaclab.assets import AssetBaseCfg, RigidObjectCfg
 
-from robots import STAND_URDF_PATH as _STAND_URDF
-
 # All puzzle blocks are 5 cm cubes, 0.2 kg
 _BLOCK_SIZE = (0.05, 0.05, 0.05)
 _BLOCK_MASS = 0.2
@@ -22,9 +20,9 @@ _BLOCK_FRICTION = 0.2
 
 # (init_pos, diffuse_color) — order matches solution JSON obj_idx
 _BLOCK_SPECS = [
-    ([0.3127,  0.1797, 0.8], (0.9, 0.2, 0.2)),   # 0: target      red
-    ([0.1825,  0.1874, 0.8], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
-    # ([0.1712, -0.1893, 0.8], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
+    ([0.3127,  0.1797, 0.835], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.3127,  0.1797, 0.855], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
+    ([0.3127,  0.1797, 0.875], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
     # ([0.3095, -0.1735, 0.8], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
 ]
 
@@ -40,7 +38,7 @@ def make_static_cfgs(stand_urdf: str) -> list:
             self_collision=False,
             joint_drive=None,  # single-link URDF — no joints to drive
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, -0.160)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.0, 0.0, 0.14)),
     )
 
     table_cfg = AssetBaseCfg(

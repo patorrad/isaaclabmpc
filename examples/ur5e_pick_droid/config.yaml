@@ -1,0 +1,36 @@
+# UR5e pick task — pi0.5 with DROID policy (in-distribution test).
+#
+# The pi05_droid config uses DROID norm stats and DROID observation format:
+#   joint_position (7D = 6 UR5e joints + 1 zero pad)
+#   gripper_position (1D = 0, no physical gripper)
+#   exterior_image_1_left + wrist_image_left (224x224 RGB)
+#
+# Server:
+#   python scripts/serve_policy.py policy:checkpoint \
+#     --policy.config pi05_droid \
+#     --policy.dir ~/.cache/openpi/openpi-assets/checkpoints/pi05_base \
+#     --port 8000
+
+n_steps: 3000
+
+# UR5e base: upright, on the table surface, set back from the workspace.
+# Tune robot_init_pos so the EE reaches PICK_OBJECT_INIT_POS = (0.45, 0.0, 0.775).
+robot_init_pos: [0.45, 0.0, 0.775]
+
+# Initial joints from ur5e training distribution mean.
+robot_init_joints: [2.82, -1.63, 0.44, -1.54, -0.39, 0.18]
+
+ee_link_name: "wrist_3_link"
+
+droid:
+  host: "localhost"
+  port: 8000
+  language_instruction: "pick up the red block"
+  action_execute: 5
+  # EE delta scale — start at 0.3 and increase if motion is too slow.
+  action_scale: 0.3
+  ee_lambda: 0.05     # DLS damping
+
+isaaclab:
+  dt: 0.02
+  env_spacing: 3.0

@@ -30,7 +30,7 @@ import torch
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-from isaaclab.sensors import ContactSensor, ContactSensorCfg
+from isaaclab.sensors import ContactSensor, ContactSensorCfg, CameraCfg
 from isaaclab.sim import SimulationContext
 from isaaclab.utils import configclass
 
@@ -59,6 +59,7 @@ def _make_scene_cfg(
     object_cfgs: Optional[List[RigidObjectCfg]] = None,
     contact_sensor_cfgs: Optional[List[ContactSensorCfg]] = None,
     static_cfgs: Optional[List[AssetBaseCfg]] = None,
+    camera_cfgs: Optional[List[CameraCfg]] = None,
 ):
     """Dynamically create an InteractiveSceneCfg subclass with robot, any
     number of rigid objects, contact sensors, and static scene obstacles.
@@ -101,6 +102,11 @@ def _make_scene_cfg(
         key = f"static_{i}"
         ns["__annotations__"][key] = AssetBaseCfg
         ns[key] = stcfg.replace(prim_path=f"{{ENV_REGEX_NS}}/Static{i}")
+
+    for i, camcfg in enumerate(camera_cfgs or []):
+        key = f"camera_{i}"
+        ns["__annotations__"][key] = CameraCfg
+        ns[key] = camcfg  # prim_path already set by caller (may use {ENV_REGEX_NS})
 
     _SceneCfg = configclass(type("_SceneCfg", (InteractiveSceneCfg,), ns))
     return _SceneCfg(num_envs=num_envs, env_spacing=env_spacing)
@@ -145,6 +151,7 @@ class IsaacLabWrapper:
         object_cfgs: Optional[List[RigidObjectCfg]] = None,
         contact_sensor_cfgs: Optional[List[ContactSensorCfg]] = None,
         static_cfgs: Optional[List[AssetBaseCfg]] = None,
+        camera_cfgs: Optional[List[CameraCfg]] = None,
     ):
         self.cfg = cfg
         self.num_envs = num_envs
@@ -169,6 +176,7 @@ class IsaacLabWrapper:
             object_cfgs=object_cfgs,
             contact_sensor_cfgs=contact_sensor_cfgs,
             static_cfgs=static_cfgs,
+            camera_cfgs=camera_cfgs,
         )
         self.scene = InteractiveScene(scene_cfg)
 
@@ -209,6 +217,13 @@ class IsaacLabWrapper:
         ]
 
         # ------------------------------------------------------------------
+        # Camera handles — one entry per configured camera
+        # ------------------------------------------------------------------
+        self.cameras: list = [
+            self.scene[f"camera_{i}"] for i in range(len(camera_cfgs or []))
+        ]
+
+        # ------------------------------------------------------------------
         # Apply init_state and warm up one physics step so that joint_pos
         # buffers reflect InitialStateCfg rather than zeros.
         # sim_context.reset() initialises PhysX but does not write the
@@ -241,6 +256,15 @@ class IsaacLabWrapper:
         """
         u = u.to(self.device, non_blocking=True)
         self.robot.set_joint_velocity_target(u)
+
+    def apply_position_cmd(self, q_des: torch.Tensor):
+        """Apply joint position targets to all parallel environments.
+
+        Args:
+            q_des: (num_envs, DOF) desired joint positions [rad].
+        """
+        q_des = q_des.to(self.device, non_blocking=True)
+        self.robot.set_joint_position_target(q_des)
 
     def apply_effort_cmd(self, u: torch.Tensor):
         """Apply joint torque commands directly (effort/torque control mode).
@@ -388,3 +412,26 @@ class IsaacLabWrapper:
         """Set goal position, shape (3,) or (1, 3)."""
         with self._goal_lock:
             self._goal = goal.to(self.device, dtype=torch.float32).view(3)
+
+    # ------------------------------------------------------------------
+    # Camera accessors
+    # ------------------------------------------------------------------
+
+    def get_ee_jacobian(self) -> torch.Tensor:
+        """Geometric Jacobian for the EE link in world frame, shape (num_envs, 6, DOF).
+
+        Row ordering: [:, 0:3, :] = translational, [:, 3:6, :] = rotational.
+        For DLS IK: q_dot = J^T (J J^T + λ²I)^{-1} ee_vel
+        """
+        jacobi_idx = self._ee_idx - 1 if self.robot.is_fixed_base else self._ee_idx
+        return self.robot.root_physx_view.get_jacobians()[:, jacobi_idx, :, :]
+
+    def get_camera_rgb(self, cam_idx: int = 0, env_idx: int = 0) -> "np.ndarray":
+        """RGB image from camera cam_idx for env env_idx.
+
+        Returns:
+            numpy uint8 array of shape (H, W, 3).
+        """
+        import numpy as np
+        rgba = self.cameras[cam_idx].data.output["rgb"]  # (num_envs, H, W, 4)
+        return rgba[env_idx, :, :, :3].cpu().numpy().astype(np.uint8)

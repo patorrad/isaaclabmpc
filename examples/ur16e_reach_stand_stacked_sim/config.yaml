@@ -60,60 +60,33 @@ robot_init_pos: [0.20, 0.0, 2.075] #1.9] #2.075]
 
 # Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
 #                              wrist_1, wrist_2, wrist_3
-robot_init_joints: [0.0, -2.5, 2.2, -0.042, 1.5802, 0.5275] #[0.549,-1.800,1.400,0.058] prev; [-2.2557,1.0872,0.8265] original Z=2.075
+robot_init_joints: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275]
 
 # State dimension: 6 joint positions + 6 joint velocities
 nx: 12
 
 # Initial goal position in world frame [x, y, z]  (metres)
 # Adjust to a reachable pose for the UR16e home configuration
-goal: [0.40, 0.10, 1.00]
+goal: [0.40, 0.10, 0.92]
 
 # # Path to the RRT solution JSON that defines the push sequence
-# solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
-solution_path: "/home/jack/research/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution.json"
+solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_stacked_sim/extraction_robot_sim.json"
 
 # End-effector body name in the Isaac Lab articulation.
 # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
 # into wrist_3_link, so we reference wrist_3_link here.
 ee_link_name: "wrist_3_link"
 
-# # MPPI parameters (mirrors genesismpc conf/mppi/ur5_stick_stacked.yaml)
-# mppi:
-#   mppi_mode: "halton-spline"
-#   sampling_method: "halton"
-#   num_samples: 1000
-#   horizon: 12
-#   device: "cuda:0"
-#   u_min: [-0.2]
-#   u_max: [0.2]
-#   lambda_: 0.05
-#   noise_sigma:
-#     - [0.1, 0.0,  0.0,  0.0,  0.0,  0.0]
-#     - [0.0,  0.1, 0.0,  0.0,  0.0,  0.0]
-#     - [0.0,  0.0,  0.1, 0.0,  0.0,  0.0]
-#     - [0.0,  0.0,  0.0,  0.1, 0.0,  0.0]
-#     - [0.0,  0.0,  0.0,  0.0,  0.1, 0.0]
-#     - [0.0,  0.0,  0.0,  0.0,  0.0,  0.1]
-#   rollout_var_discount: 0.95
-#   update_cov: false
-#   sample_null_action: true
-#   filter_u: true
-#   use_priors: false
-#   seed_val: 0
-
-# Isaac Lab physics parameters
-# isaaclab:
-#   dt: 0.02 #16667 #0.0035
+# MPPI parameters (mirrors genesismpc conf/mppi/ur5_stick_stacked.yaml)
 mppi:
   mppi_mode: "halton-spline"
   sampling_method: "halton"
   num_samples: 1000
-  horizon: 24
+  horizon: 18
   device: "cuda:0"
-  u_min: [-0.2]
-  u_max: [0.2]
-  lambda_: 0.5
+  u_min: [-0.7]
+  u_max: [0.7]
+  lambda_: 1.0
   noise_sigma:
     - [0.2, 0.0,  0.0,  0.0,  0.0,  0.0]
     - [0.0,  0.2, 0.0,  0.0,  0.0,  0.0]

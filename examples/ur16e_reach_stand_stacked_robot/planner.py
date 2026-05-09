@@ -56,8 +56,8 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
+from assets.robots.ur16e import make_ur16e_cfg
+from examples.ur16e_reach_stand_stacked_robot.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -94,9 +94,9 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.nx              = raw.get("nx",              cfg.nx)
     cfg.goal            = raw.get("goal",            cfg.goal)
     cfg.ee_link_name    = raw.get("ee_link_name",    cfg.ee_link_name)
+    cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
     cfg.solution_path   = raw.get("solution_path",   cfg.solution_path)
     cfg.step_threshold  = raw.get("step_threshold",  cfg.step_threshold)
-    cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
 
