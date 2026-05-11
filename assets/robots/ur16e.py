@@ -117,8 +117,8 @@ UR16E_CFG = ArticulationCfg(
             # UR16e continuous-current torques: ~330 Nm (shoulder), ~56 Nm (wrist)
             effort_limit_sim=330.0,
             velocity_limit_sim=3.14,          # ~180 deg/s
-            stiffness=100.0,   #0.0                 # no position tracking
-            damping=0.0,    #20.0                # velocity-tracking gain
+            stiffness=0.0,                 # no position tracking
+            damping=200.0,                # velocity-tracking gain
         ),
     },
 )

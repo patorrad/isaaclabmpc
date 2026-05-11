@@ -57,7 +57,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
 from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks_robot.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_reach_stand_blocks_sim.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -173,8 +173,8 @@ class Objective:
             "robot_ori":      5.0,
             "height_match":  20.0,
             "push_align":    45.0,
-            "collision":      1.0,
-            "joint_vel":      0.,
+            "collision":      5.0,
+            "joint_vel":      1.,
         }
         self.step_threshold = cfg.step_threshold
 
@@ -197,6 +197,16 @@ class Objective:
         print("[Objective] Final object world poses:")
         for name, (idx, pos) in final_poses.items():
             print(f"  {name} (idx {idx}): {pos}")
+
+    def reset_episode(self, steps: list | None = None):
+        """Restart from step 0. Optionally update goal positions for this episode."""
+        if steps is not None:
+            self.steps = steps
+        self.current_step = 0
+        self._last_obj_pos = None
+        self._first_call = True
+        print(f"\n[Objective] Episode reset — steps: "
+              + ", ".join(f"{s['obj_name']}→{s['end_pos']}" for s in self.steps))
 
     def reset(self):
         """Advance to next step if current block reached its goal."""
@@ -233,8 +243,6 @@ class Objective:
         sim.set_goal(goal_pos)
         
         obj_pos = sim.get_object_pos(obj_idx)  # (num_envs, 3)
-        # import pdb; pdb.set_trace()
-        print(f'{obj_idx} {obj_pos[0, :]}')
 
         # Cache real object position (env 0) for step-advance check in reset()
         if self._first_call:
@@ -328,7 +336,7 @@ def main():
 
     server = zerorpc.Server(planner)
     server.bind("tcp://0.0.0.0:4242")
-    print("[planner] Stacked-blocks MPPI server listening on tcp://0.0.0.0:4242")
+    print("[planner] Blocks MPPI server listening on tcp://0.0.0.0:4242")
     server.run()
 
 

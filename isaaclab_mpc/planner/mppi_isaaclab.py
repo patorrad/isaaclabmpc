@@ -298,6 +298,16 @@ class MPPIIsaacLabPlanner:
             goal = torch.zeros(3)
         return torch_to_bytes(goal)
 
+    def reset_episode(self, steps_json: str = ""):
+        """Reset objective to step 0. Pass JSON-encoded steps to update goals."""
+        if hasattr(self.objective, "reset_episode"):
+            import json as _json
+            steps = _json.loads(steps_json) if steps_json else None
+            self.objective.reset_episode(steps=steps)
+        # Reset MPPI warm-start so stale action sequences from failed episodes
+        # don't bias the next episode.
+        self.mppi.U = torch.zeros_like(self.mppi.U)
+
     def test(self, msg: str):
         """Ping/echo for connection testing."""
         print(f"[MPPIIsaacLabPlanner] test: {msg}")

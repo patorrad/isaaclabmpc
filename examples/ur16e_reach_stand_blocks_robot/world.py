@@ -67,7 +67,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_reach_stand_blocks_robot.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -105,54 +105,6 @@ def _load_config(yaml_path: str) -> WorldConfig:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
     return cfg
-
-
-# ===========================================================================
-# 4. Keyboard goal control
-# ===========================================================================
-
-class GoalController:
-    """Listens for arrow/PgUp/PgDn keys and adjusts the world goal."""
-
-    STEP = 0.02  # metres per key press
-
-    def __init__(self, goal: torch.Tensor, lock: threading.Lock):
-        self._goal = goal
-        self._lock = lock
-        self._start()
-
-    def _start(self):
-        try:
-            from pynput import keyboard
-
-            def on_press(key):
-                delta = torch.zeros(3, device=self._goal.device)
-                try:
-                    if key == keyboard.Key.up:
-                        delta[0] = self.STEP
-                    elif key == keyboard.Key.down:
-                        delta[0] = -self.STEP
-                    elif key == keyboard.Key.right:
-                        delta[1] = -self.STEP
-                    elif key == keyboard.Key.left:
-                        delta[1] = self.STEP
-                    elif key == keyboard.Key.page_up:
-                        delta[2] = self.STEP
-                    elif key == keyboard.Key.page_down:
-                        delta[2] = -self.STEP
-                except Exception:
-                    pass
-                if delta.any():
-                    with self._lock:
-                        self._goal.add_(delta)
-                    print(f"\n[goal] {self._goal.tolist()}", flush=True)
-
-            listener = keyboard.Listener(on_press=on_press)
-            listener.daemon = True
-            listener.start()
-        except Exception as e:
-            print(f"[GoalController] keyboard listener not available: {e}")
-
 
 # ===========================================================================
 # 5. Rollout + goal visualisation
@@ -294,9 +246,6 @@ def main():
     )
     device = world.device
     DOF = world.num_dof
-
-    # Keyboard goal control
-    GoalController(world._goal, world._goal_lock)
 
     # TCP offset: offset from wrist_3_link origin to tool tip in wrist_3_link frame.
     # tool0 +Z == wrist_3_link +Z (fixed joint chain has no translation, only rotation).

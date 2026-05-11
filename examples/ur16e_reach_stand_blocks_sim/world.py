@@ -61,7 +61,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_reach_stand_blocks_robot.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -148,11 +148,26 @@ class RolloutVisualiser:
     def update(
         self,
         rollouts_bytes: bytes,
+        goal: torch.Tensor,
         ee_quat_world: torch.Tensor,
         env_origin: torch.Tensor,
         n_draw: int,
-        target: torch.Tensor = None,
     ):
+        """Refresh debug geometry for this control step.
+
+        The planner tracks the EE link origin.  To shift rollouts to the
+        actual tool tip, we rotate tcp_offset_local into world frame using
+        the current EE quaternion and add it to every rollout point — the
+        same pattern as genesismpc/examples/ur5_suction/world.py.
+
+        Args:
+            rollouts_bytes:  serialised (horizon, num_envs, 3) tensor from planner.
+                             Positions are in local (env-relative) frame.
+            goal:            (3,) goal position in local frame.
+            ee_quat_world:   (4,) current EE quaternion in world frame (w, x, y, z).
+            env_origin:      (3,) world-frame offset of env 0 (scene.env_origins[0]).
+            n_draw:          how many rollout trajectories to draw (subsampled).
+        """
         self._draw.clear_lines()
         self._draw.clear_points()
 
@@ -161,9 +176,9 @@ class RolloutVisualiser:
         # Rotate TCP offset into world frame using current EE orientation
         tcp_offset_world = _quat_apply(ee_quat_world.cpu(), self.tcp_offset_local)
 
-        if target is not None:
-            tp = tuple((target.cpu() + origin).tolist())
-            self._draw.draw_points([tp], [self.TARGET_COLOR], [self.TARGET_SIZE])
+        # ---- goal marker (local → world) ----
+        gp = tuple((goal.cpu() + origin).tolist())
+        self._draw.draw_points([gp], [self.GOAL_COLOR], [self.GOAL_SIZE])
 
         # ---- rollout trajectories ----
         if n_draw <= 0:
@@ -176,7 +191,6 @@ class RolloutVisualiser:
         # local → world, then shift to TCP tip
         rollouts = rollouts.permute(1, 0, 2).cpu() + origin + tcp_offset_world  # (num_envs, H, 3)
         num_envs = rollouts.shape[0]
-        print(rollouts[0, 0, :])
         stride = max(1, num_envs // n_draw)
         rollouts_sub = rollouts[::stride]
 
@@ -256,7 +270,6 @@ def main():
     q = world.get_joint_pos()[0].clone()   # (DOF,)
     dq = world.get_joint_vel()[0].clone()  # (DOF,)
 
-    print(f"[world] Goal: {cfg.goal}  (use arrow keys / PgUp / PgDn to move)")
     print(f"[world] Body names: {list(world.robot.body_names)}")
 
     t_prev = time.time()
@@ -305,7 +318,9 @@ def main():
             rollout_bytes = planner.get_rollouts()
             origin = world.scene.env_origins[0]
             ee_quat = world.get_ee_quat()[0]      # (4,) w,x,y,z world frame
-            vis.update(rollout_bytes, ee_quat, origin, n_rollouts_draw, target=goal)
+            # vis.update(rollout_bytes, ee_quat, origin, n_rollouts_draw, target=goal)
+            goal_now = bytes_to_torch(planner.get_current_goal_pos())
+            vis.update(rollout_bytes, goal_now, ee_quat, origin, n_rollouts_draw)
 
         # ------------------------------------------------------------------
         # 4. Apply command and step the world simulation

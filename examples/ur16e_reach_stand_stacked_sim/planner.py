@@ -233,8 +233,6 @@ class Objective:
         sim.set_goal(goal_pos)
         
         obj_pos = sim.get_object_pos(obj_idx)  # (num_envs, 3)
-        # import pdb; pdb.set_trace()
-        # print(f'{obj_idx} {obj_pos[0, :]}')
 
         # Cache real object position (env 0) for step-advance check in reset()
         if self._first_call:
