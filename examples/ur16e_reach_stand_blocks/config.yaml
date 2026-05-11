@@ -56,7 +56,9 @@ step_threshold: 0.04
 n_steps: 10000
 
 # World-frame position of the robot base [x, y, z] (metres)
-robot_init_pos: [0.208, -0.5, 1.775] #1.9] #2.075]
+# Original (pre-103611a): robot_init_pos: [0.208, 0.0, 2.075]  # Z lowered to 1.775 to reduce arm extension; Y shifted to -0.5 to reduce singularities
+robot_init_pos: [0.208, -0.5, 1.775]
+# robot_init_pos: [0.208, -0.5, 2.075]
 
 # Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
 #                              wrist_1, wrist_2, wrist_3
@@ -72,7 +74,11 @@ goal: [0.40, 0.10, 1.00]
 # # Path to the RRT solution JSON that defines the push sequence
 # solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
 # solution_path: "/home/jack/research/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution.json"
-solution_path: "/home/jack/research/puzzles/solution_stacked.json"
+solution_path: "/home/jack/research/puzzles/cube27_plan.json"
+
+# Path to a puzzles scenario YAML (overrides hardcoded block positions in scene.py).
+# Can be relative to this config file or absolute. Also settable via --scenario CLI arg.
+scenario: "/home/jack/research/puzzles/conf/scenario/cube27.yaml"
 
 # End-effector body name in the Isaac Lab articulation.
 # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged

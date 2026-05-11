@@ -83,6 +83,7 @@ class PlannerConfig:
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
     solution_path: str = "solution_obs_3_simple_extraction_robot.json"
+    scenario: Optional[str] = None
     step_threshold: float = 0.02
     stand_urdf: str = _STAND_URDF_PATH
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
@@ -95,12 +96,20 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     with open(yaml_path) as f:
         raw = yaml.safe_load(f)
 
+    cfg_dir = os.path.dirname(os.path.abspath(yaml_path))
+
+    def _resolve(p: Optional[str]) -> Optional[str]:
+        if p is None:
+            return None
+        return p if os.path.isabs(p) else os.path.join(cfg_dir, p)
+
     cfg = PlannerConfig()
     cfg.n_steps         = raw.get("n_steps",         cfg.n_steps)
     cfg.nx              = raw.get("nx",              cfg.nx)
     cfg.goal            = raw.get("goal",            cfg.goal)
     cfg.ee_link_name    = raw.get("ee_link_name",    cfg.ee_link_name)
-    cfg.solution_path   = raw.get("solution_path",   cfg.solution_path)
+    cfg.solution_path   = _resolve(raw.get("solution_path", cfg.solution_path))
+    cfg.scenario        = _resolve(raw.get("scenario",      cfg.scenario))
     cfg.step_threshold  = raw.get("step_threshold",  cfg.step_threshold)
     cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
@@ -386,9 +395,10 @@ def main():
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
 
+    scenario_path = args_cli.scenario or cfg.scenario
     block_positions = None
-    if args_cli.scenario is not None:
-        with open(args_cli.scenario) as f:
+    if scenario_path is not None:
+        with open(scenario_path) as f:
             sc = yaml.safe_load(f)
         is_ = sc["initial_state"]
         bin_positions = [is_["target_pos"]] + [o["pos"] for o in is_["obstacles"]]

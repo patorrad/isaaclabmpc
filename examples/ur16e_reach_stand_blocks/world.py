@@ -60,7 +60,7 @@ import torch
 import yaml
 import zerorpc
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _PROJECT_ROOT not in sys.path:
@@ -92,6 +92,7 @@ class WorldConfig:
     stand_urdf: str = _STAND_URDF_PATH
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
+    scenario: Optional[str] = None
     viewer_lookat: List[float] = field(default_factory=lambda: [0.25, 0.0, 0.04])
     viewer_eye:    List[float] = field(default_factory=lambda: [1.50, 0.0, 0.60])
 
@@ -99,6 +100,14 @@ class WorldConfig:
 def _load_config(yaml_path: str) -> WorldConfig:
     with open(yaml_path) as f:
         raw = yaml.safe_load(f)
+
+    cfg_dir = os.path.dirname(os.path.abspath(yaml_path))
+
+    def _resolve(p: Optional[str]) -> Optional[str]:
+        if p is None:
+            return None
+        return p if os.path.isabs(p) else os.path.join(cfg_dir, p)
+
     cfg = WorldConfig()
     cfg.n_steps = raw.get("n_steps", cfg.n_steps)
     cfg.goal = raw.get("goal", cfg.goal)
@@ -106,6 +115,7 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.stand_urdf        = raw.get("stand_urdf",        cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+    cfg.scenario          = _resolve(raw.get("scenario", cfg.scenario))
 
     if "isaaclab" in raw:
         il = raw["isaaclab"]
@@ -291,9 +301,10 @@ def main():
     cfg.n_steps = args_cli.n_steps
     headless = getattr(args_cli, "headless", False)
 
+    scenario_path = args_cli.scenario or cfg.scenario
     block_positions = None
-    if args_cli.scenario is not None:
-        with open(args_cli.scenario) as f:
+    if scenario_path is not None:
+        with open(scenario_path) as f:
             sc = yaml.safe_load(f)
         is_ = sc["initial_state"]
         bin_positions = [is_["target_pos"]] + [o["pos"] for o in is_["obstacles"]]
