@@ -360,7 +360,7 @@
   <link name="tool0">
     <inertial>
       <!-- rough placeholder values, tune if you care about dynamics -->
-      <origin xyz="0 0 0.08" rpy="0 0 0"/>
+      <origin xyz="0 0 0.10" rpy="0 0 0"/>
       <mass value="0.1"/>
       <inertia ixx="1e-4" iyy="1e-4" izz="1e-4"
                ixy="0" ixz="0" iyz="0"/>
@@ -368,11 +368,9 @@
 
     <!-- visual: pipe nipple -->
     <visual>
-      <!-- center of the cylinder 8 cm in front of tool0 along +Z -->
-      <origin xyz="0 0 0.055" rpy="0 0 0"/>
+      <origin xyz="0 0 0.10" rpy="0 0 0"/>
       <geometry>
-        <!-- radius = 1.5 cm, total length = 16 cm -->
-        <cylinder radius="0.01" length="0.115"/>
+        <cylinder radius="0.01" length="0.20"/>
       </geometry>
       <material name="gripper_black">
         <color rgba="0.1 0.1 0.1 1.0"/>
@@ -381,19 +379,19 @@
 
     <!-- collision: same as visual -->
     <collision>
-      <origin xyz="0 0 0.055" rpy="0 0 0"/>
+      <origin xyz="0 0 0.10" rpy="0 0 0"/>
       <geometry>
-        <cylinder radius="0.01" length="0.115"/>
+        <cylinder radius="0.01" length="0.20"/>
       </geometry>
     </collision>
 
     <!-- optional: tiny sphere to visualize TCP at the tip -->
     <visual>
-      <origin xyz="0 0 0.115" rpy="0 0 0"/>  <!-- tip of the cylinder -->
+      <origin xyz="0 0 0.20" rpy="0 0 0"/>  <!-- tip of the cylinder -->
       <geometry>
         <sphere radius="0.005"/>
       </geometry>
-      <material name="tcp_green">
+      <material name="tcp_green">  <!-- tcp_sphere_tip -->
         <color rgba="0 1 0 1"/>
       </material>
     </visual>

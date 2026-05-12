@@ -69,7 +69,7 @@ if _PROJECT_ROOT not in sys.path:
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from assets.robots.ur16e import make_ur16e_cfg
+from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
 from robots import STAND_URDF_PATH as _STAND_URDF_PATH
 from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
 
@@ -353,9 +353,8 @@ def main():
     GoalController(world._goal, world._goal_lock)
 
     # TCP offset: offset from wrist_3_link origin to tool tip in wrist_3_link frame.
-    # tool0 +Z == wrist_3_link +Z (fixed joint chain has no translation, only rotation).
-    # The pipe-nipple gripper cylinder extends 0.14 m along +Z.
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.12])
+    # Derived from the URDF tool0 collision cylinder — single source of truth.
+    tcp_offset_local = torch.tensor([0.0, 0.0, get_tool_length()])
 
     # Rollout visualiser (only when rendering)
     vis = RolloutVisualiser(tcp_offset_local) if not headless else None

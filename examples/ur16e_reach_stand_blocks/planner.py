@@ -60,7 +60,7 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from assets.robots.ur16e import make_ur16e_cfg
+from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
 from robots import STAND_URDF_PATH as _STAND_URDF_PATH
 from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
 
@@ -180,8 +180,6 @@ class Objective:
       push_align    — TCP is behind the block relative to the push direction
     """
 
-    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.115])
-
     def __init__(self, cfg: PlannerConfig, debug: bool = False):
         self.weights = {
             # "robot_to_obj": 30.0,
@@ -205,7 +203,7 @@ class Objective:
             # "joint_vel":      2.25, #.25,
             "robot_to_obj":  5.0,
             "obj_to_goal":   25.0,
-            "robot_ori":      5.0,
+            "robot_ori":      15.0,
             "height_match":  20.0,
             "push_align":    45.0,
             "collision":      1.0,
@@ -213,11 +211,14 @@ class Objective:
             "singularity":    0.05,  # reciprocal manipulability; tune up to penalise near-singular configs
         }
         self.step_threshold = cfg.step_threshold
+        self.tcp_offset_local = torch.tensor([0.0, 0.0, get_tool_length()])
 
         with open(cfg.solution_path) as f:
             solution = json.load(f)
 
         self.steps = solution["steps"]
+        obj_size = solution.get("env_config", {}).get("OBJ_SIZE", 0.05)
+        self.align_gate_dist = obj_size / 2 + 0.01  # back face + 1 cm standoff
         self.current_step = 0
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True
@@ -301,7 +302,7 @@ class Objective:
         # TCP tip position
         ee_pos  = sim.get_ee_pos()   # (num_envs, 3)
         ee_quat = sim.get_ee_quat()  # (num_envs, 4)
-        tcp_offset = self.TCP_OFFSET_LOCAL.to(device).expand(sim.num_envs, 3)
+        tcp_offset = self.tcp_offset_local.to(device).expand(sim.num_envs, 3)
         tcp_pos = ee_pos + _quat_apply(ee_quat, tcp_offset)  # (num_envs, 3)
 
         # All steps done — zero cost
@@ -337,9 +338,9 @@ class Objective:
         # Height match: TCP Z ≈ block Z
         height_match = torch.abs(tcp_pos[:, 2] - obj_pos[:, 2])
 
-        # Push alignment: 0 when TCP is directly behind block, 2 when in front.
-        # Gated by distance: fades to zero when TCP is already at the block so
-        # the robot stops trying to reposition and just pushes.
+        # Push alignment: cosine similarity between (TCP→block) and (block→goal),
+        # shifted by +1 so the range is [0, 2]: 0 = TCP directly behind block
+        # (ideal approach), 2 = TCP directly in front (worst case).
         r2b_2d = robot_to_obj[:, :2]
         b2g_2d = obj_to_goal[:, :2]
         push_align = (
@@ -348,7 +349,10 @@ class Objective:
                * torch.linalg.norm(b2g_2d, dim=1).clamp(min=1e-6))
             + 1.0
         )
-        align_gate = torch.sigmoid((robot_to_obj_dist - 0.08) / 0.03)
+        # Gate fades the alignment cost to zero once the TCP reaches the back face
+        # of the object (obj_size/2 + 1 cm standoff), so the robot stops trying to
+        # reposition and commits to pushing. Sigmoid width 0.03 m ≈ 3 cm transition.
+        align_gate = torch.sigmoid((robot_to_obj_dist - self.align_gate_dist) / 0.03)
         push_align = push_align * align_gate
 
         forces    = sim.get_contact_forces(0)           # (num_envs, 1, 3)
