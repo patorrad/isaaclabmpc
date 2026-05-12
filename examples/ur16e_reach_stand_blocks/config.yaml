@@ -57,7 +57,7 @@ n_steps: 10000
 
 # World-frame position of the robot base [x, y, z] (metres)
 # Original (pre-103611a): robot_init_pos: [0.208, 0.0, 2.075]  # Z lowered to 1.775 to reduce arm extension; Y shifted to -0.5 to reduce singularities
-robot_init_pos: [0.208, -0.5, 1.775]
+robot_init_pos: [0.208, -0.3, 1.775]
 # robot_init_pos: [0.208, -0.5, 2.075]
 
 # Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
@@ -115,11 +115,11 @@ ee_link_name: "wrist_3_link"
 mppi:
   mppi_mode: "halton-spline"
   sampling_method: "halton"
-  num_samples: 512
-  horizon: 32
+  num_samples: 128
+  horizon: 50
   device: "cuda:0"
-  u_min: [-0.2]
-  u_max: [0.2]
+  u_min: [-0.8]
+  u_max: [0.8]
   lambda_: 0.5
   noise_sigma:
     - [0.2, 0.0,  0.0,  0.0,  0.0,  0.0]
