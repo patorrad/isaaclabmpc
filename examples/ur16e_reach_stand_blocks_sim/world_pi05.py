@@ -25,7 +25,7 @@ if "--enable_cameras" not in sys.argv:
 
 parser = argparse.ArgumentParser(description="ur16e reach blocks — pi0.5 policy")
 parser.add_argument("--n_steps",        type=int,   default=5000)
-parser.add_argument("--action_execute", type=int,   default=5,
+parser.add_argument("--action_execute", type=int,   default=2,
                     help="Actions from each chunk to execute before re-querying")
 parser.add_argument("--action_scale",   type=float, default=1.0)
 parser.add_argument("--policy_host",    type=str,   default="localhost")
@@ -309,7 +309,7 @@ def main():
 
             delta   = action_queue.popleft()
             vel_cmd = args_cli.action_scale * delta / dt
-            vel_cmd = np.clip(vel_cmd, -3.14, 3.14)
+            vel_cmd = np.clip(vel_cmd, -1.0, 1.0)
 
             u = torch.tensor(vel_cmd, device=device, dtype=torch.float32).view(1, DOF)
             world.apply_robot_cmd(u)

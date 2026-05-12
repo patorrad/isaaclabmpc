@@ -16,6 +16,15 @@
 # Distance threshold (metres) for declaring a step complete
 step_threshold: 0.04
 
+# Puzzle planner integration
+# plane_z: world-frame z of the bin floor (table top).
+#   Derived from scene.py: block z (0.90) - OBJ_H (0.025) = 0.875
+plane_z: 0.875
+# bin_center: [x, y] world-frame centre of the bin used by the puzzle planner.
+#   x range [cx-0.15, cx+0.15] must cover all block x positions.
+#   y range [cy-0.15, cy+0.15] must cover all block y positions.
+bin_center: [0.25, 0.185]
+
 # # End-effector body name in the Isaac Lab articulation.
 # # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
 # # into wrist_3_link, so we reference wrist_3_link here.
