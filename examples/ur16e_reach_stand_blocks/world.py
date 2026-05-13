@@ -42,6 +42,8 @@ parser.add_argument("--scenario", type=str, default=None,
 parser.add_argument("--planner_addr", type=str, default="tcp://localhost:4242")
 parser.add_argument("--n_rollouts_draw", type=int, default=50,
                     help="Number of MPPI rollout trajectories to visualise (0 = off)")
+parser.add_argument("--output_path", type=str, default=None,
+                    help="If set, write a result JSON (success, ee_trajectory, etc.) on exit.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
 
@@ -51,6 +53,7 @@ simulation_app = app_launcher.app
 # ===========================================================================
 # 2. All other imports
 # ===========================================================================
+import json
 import os
 import sys
 import time
@@ -377,7 +380,15 @@ def main():
     print(f"[world] Goal: {cfg.goal}  (use arrow keys / PgUp / PgDn to move)")
     print(f"[world] Body names: {list(world.robot.body_names)}")
 
-    t_prev = time.time()
+    t_start = time.time()
+    t_prev = t_start
+
+    # Telemetry buffers
+    ee_trajectory: list[list[float]] = []
+    block_positions_history: list[list[list[float]]] = []
+    step_completion_events: list[dict] = []
+    all_steps_done = False
+    prev_step_info = 0
 
     for step in range(cfg.n_steps):
         if not simulation_app.is_running():
@@ -422,14 +433,35 @@ def main():
         ee_pos = world.get_ee_pos()[0]            # (3,) local frame
 
         # ------------------------------------------------------------------
-        # 6. Logging — show TCP tip distance to current block goal
+        # 6. Logging + telemetry
         # ------------------------------------------------------------------
         try:
-            step_info = bytes_to_torch(planner.get_current_step()).item()
-            total_steps = bytes_to_torch(planner.get_total_steps()).item()
-            step_label = f"step {int(step_info)}/{int(total_steps)}"
+            step_info = int(bytes_to_torch(planner.get_current_step()).item())
+            total_steps = int(bytes_to_torch(planner.get_total_steps()).item())
+            step_label = f"step {step_info}/{total_steps}"
         except Exception:
-            step_label = ""
+            step_info, total_steps, step_label = prev_step_info, 0, ""
+
+        # Record step-completion transitions
+        if step_info != prev_step_info:
+            step_completion_events.append({
+                "step_idx": step_info,
+                "sim_step": step,
+                "elapsed_s": time.time() - t_start,
+            })
+            prev_step_info = step_info
+
+        # Sample EE position and block positions every 50 sim steps
+        if step % 50 == 0:
+            ee_trajectory.append(ee_pos.tolist())
+            block_positions_history.append([
+                world.get_object_pos(i)[0].tolist() for i in range(len(world.objects))
+            ])
+
+        # Check for completion every 100 steps
+        if step % 100 == 0 and total_steps > 0 and step_info >= total_steps:
+            all_steps_done = True
+            break
 
         elapsed = time.time() - t_prev
         t_prev = time.time()
@@ -443,6 +475,26 @@ def main():
         )
 
     print("\n[world] Done.")
+
+    # ------------------------------------------------------------------
+    # Write result JSON if requested
+    # ------------------------------------------------------------------
+    if args_cli.output_path:
+        block_positions_final = [
+            world.get_object_pos(i)[0].tolist() for i in range(len(world.objects))
+        ]
+        result = {
+            "success": all_steps_done,
+            "steps_completed": step_info,
+            "total_steps": total_steps,
+            "elapsed_time_s": time.time() - t_start,
+            "ee_trajectory": ee_trajectory,
+            "block_positions_final": block_positions_final,
+            "step_completion_events": step_completion_events,
+        }
+        with open(args_cli.output_path, 'w') as f:
+            json.dump(result, f, indent=2)
+        print(f"[world] Result written to {args_cli.output_path}")
 
 
 if __name__ == "__main__":

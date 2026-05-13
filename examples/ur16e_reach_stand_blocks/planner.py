@@ -28,6 +28,10 @@ parser = argparse.ArgumentParser(description="UR16e MPPI reach planner (Isaac La
 parser.add_argument("--scenario", type=str, default=None,
                     help="Path to a puzzles YAML scenario file. "
                          "Overrides the hardcoded block positions in scene.py.")
+parser.add_argument("--solution_path", type=str, default=None,
+                    help="Path to puzzle solution JSON. Overrides cfg.solution_path.")
+parser.add_argument("--telemetry_path", type=str, default=None,
+                    help="If set, write MPPI cost history and step events as JSON on exit.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
 args_cli.headless = True          # planner always runs headless
@@ -38,8 +42,11 @@ simulation_app = app_launcher.app
 # ===========================================================================
 # 2. All other imports (safe now that the app is running)
 # ===========================================================================
+import json
 import os
+import signal
 import sys
+import time
 
 import matplotlib.pyplot as plt
 import torch
@@ -53,7 +60,8 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-import json
+# Module-level reference set in main() so the SIGTERM handler can write telemetry.
+_objective_ref = None
 
 from mppi_torch.mppi import MPPIConfig
 from isaaclab.sensors import ContactSensorCfg
@@ -212,6 +220,9 @@ class Objective:
         }
         self.step_threshold = cfg.step_threshold
         self.tcp_offset_local = torch.tensor([0.0, 0.0, get_tool_length()])
+        self._t_start = time.time()
+        self._cost_history: list[float] = []
+        self._step_events: list[dict] = []
 
         with open(cfg.solution_path) as f:
             solution = json.load(f)
@@ -262,6 +273,10 @@ class Objective:
             dist = torch.linalg.norm(self._last_obj_pos.cpu() - goal).item()
             if dist < self.step_threshold:
                 self.current_step += 1
+                self._step_events.append({
+                    "step_idx": self.current_step,
+                    "elapsed_s": time.time() - self._t_start,
+                })
                 if self.current_step < len(self.steps):
                     ns = self.steps[self.current_step]
                     print(f"\n[Step {self.current_step}/{len(self.steps)}] "
@@ -379,7 +394,7 @@ class Objective:
             ]
             self._debug_capture = False
 
-        return (
+        cost = (
             self.weights["robot_to_obj"]  * robot_to_obj_dist
             + self.weights["obj_to_goal"]   * obj_to_goal_dist
             + self.weights["robot_ori"]     * robot_ori
@@ -389,15 +404,33 @@ class Objective:
             + self.weights["joint_vel"]     * joint_vel
             + self.weights["singularity"]   * singularity
         )
+        self._cost_history.append(float(cost.min().item()))
+        return cost
 
 
 # ===========================================================================
 # 5. Main
 # ===========================================================================
 
+def _write_telemetry(path: str, objective: 'Objective') -> None:
+    data = {
+        "mppi_cost_history": objective._cost_history,
+        "step_completion_events": objective._step_events,
+    }
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f"[planner] Telemetry written to {path}")
+
+
 def main():
+    global _objective_ref
+
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
+
+    # Apply CLI overrides
+    if args_cli.solution_path:
+        cfg.solution_path = args_cli.solution_path
 
     scenario_path = args_cli.scenario or cfg.scenario
     block_positions = None
@@ -428,6 +461,15 @@ def main():
     )
 
     objective = Objective(cfg, debug=cfg.isaaclab.debug)
+    _objective_ref = objective
+
+    def _sigterm_handler(*_):
+        if args_cli.telemetry_path and _objective_ref is not None:
+            _write_telemetry(args_cli.telemetry_path, _objective_ref)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     planner = MPPIIsaacLabPlanner(
         cfg,
         objective,
