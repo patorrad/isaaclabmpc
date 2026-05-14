@@ -150,3 +150,15 @@ viewer:
   # the table automatically if it moves.
   lookat: [0.25, 0.0, 0.04]   # centre of block manipulation area
   eye:    [1.50, 0.0, 0.60]   # across from robot, elevated
+
+costs:
+  weights:
+    robot_to_obj:  5.0    # TCP distance to current block
+    obj_to_goal:  25.0    # block distance to its goal
+    robot_ori:    15.0    # wrist polar tilt from straight-down (arccos)
+    height_match: 20.0    # TCP Z vs block Z
+    push_align:   45.0    # TCP behind block relative to push direction
+    collision:     1.0    # wrist contact force (Z component)
+    joint_vel:     0.0    # joint velocity magnitude
+    singularity:   0.05   # reciprocal manipulability (1/|det J|)
+  push_align_gate_width: 0.03   # sigmoid transition width (metres)
