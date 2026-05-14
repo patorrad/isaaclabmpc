@@ -169,6 +169,7 @@ def main():
 
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
+    headless = getattr(args_cli, "headless", False)
 
     _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, rot=(0, 1, 0, 0), joint_pos=cfg.robot_init_joints)
     robot_cfg = _base_robot_cfg.replace(
@@ -196,6 +197,7 @@ def main():
     )
     device = world.device
 
+    _camera_set = False
     tcp_offset_local = torch.tensor([0.0, 0.0, 0.115])
     vis = RolloutVisualiser(tcp_offset_local)
 
@@ -249,6 +251,12 @@ def main():
         world.robot.write_joint_state_to_sim(q_exp, dq_exp)
         world.scene.write_data_to_sim()
         world.sim_context.step(render=True)
+        if not headless and not _camera_set:
+            world.sim_context.set_camera_view(
+                eye=[1.0305, 1.0702, 1.882],
+                target=[0.0437, -0.0436, 0.7],
+            )
+            _camera_set = True
         world.scene.update(dt)
 
         # ------------------------------------------------------------------

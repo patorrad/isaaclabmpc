@@ -239,7 +239,7 @@ def main():
         num_envs=1,
         ee_link_name="wrist_3_link",
         goal=cfg.goal,
-        # object_cfgs=make_block_cfgs(),
+        object_cfgs=make_block_cfgs(),
         static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
     )
     device = world.device
@@ -281,6 +281,20 @@ def main():
         # ------------------------------------------------------------------
         # 2. Mirror joint state in the viewer (no velocity commands)
         # ------------------------------------------------------------------
+        try:
+            obj_bytes = planner.get_object_states()
+            obj_data  = bytes_to_torch(obj_bytes)
+
+            print(obj_data)
+            if obj_data.numel() >= 7:
+                n = obj_data.numel() // 7
+                for i in range(min(n, len(world.objects))):
+                    pos  = obj_data[i * 7:     i * 7 + 3].to(device)
+                    quat = obj_data[i * 7 + 3: i * 7 + 7].to(device)
+                    world._reset_object(world.objects[i], pos, quat)
+        except Exception:
+            pass
+    
         q_exp  = q.view(1, DOF).expand(world.num_envs, -1).contiguous()
         dq_exp = dq.view(1, DOF).expand(world.num_envs, -1).contiguous()
         world.robot.write_joint_state_to_sim(q_exp, dq_exp)

@@ -41,6 +41,7 @@ import sys
 import torch
 import yaml
 import zerorpc
+import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -51,6 +52,7 @@ if _PROJECT_ROOT not in sys.path:
 
 from mppi_torch.mppi import MPPIConfig
 from isaaclab.sim import RigidBodyPropertiesCfg
+from isaaclab.sensors import ContactSensorCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
 from assets.robots.ur16e import make_ur16e_cfg
@@ -154,12 +156,35 @@ class Objective:
 
     TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.115])
 
+    _PLOT_INTERVAL = 50   # update the bar chart every N compute_cost calls
+    _EMA_ALPHA     = 0.05 # smoothing factor for the running average
+
     def __init__(self, cfg: PlannerConfig):
         self.weights = {
             "ee_to_goal": 30.0,
-            "robot_ori":     7.0,
-            "joint_vel":      2.25,
+            "robot_ori":   2.0,
+            "joint_vel":   4.0,
+            "collision":   2.0,
         }
+        self._labels = list(self.weights.keys())
+        self._cost_avg = {k: 0.0 for k in self._labels}
+        self._call_count = 0
+
+        plt.ion()
+        self._fig, self._ax = plt.subplots(figsize=(6, 4))
+        self._fig.suptitle("Avg weighted cost per component (across trajectories)")
+        self._bars = self._ax.bar(self._labels, [0.0] * len(self._labels),
+                                  color=["steelblue", "tomato", "forestgreen", "goldenrod"])
+        self._ax.set_ylabel("Avg weighted cost")
+        self._ax.set_ylim(0, 10)
+        plt.tight_layout()
+        plt.show()
+
+    def _update_plot(self):
+        for bar, label in zip(self._bars, self._labels):
+            bar.set_height(self._cost_avg[label])
+        self._fig.canvas.draw_idle()
+        self._fig.canvas.flush_events()
 
     def reset(self):
         pass
@@ -179,13 +204,29 @@ class Objective:
         euler = _quat_to_euler_zyx(ee_quat)                            # (N, 3)
         robot_ori = torch.linalg.norm(
             euler - _ORI_TARGET_ZYX.to(sim.device), dim=1)            # (N,)
-        
+
         joint_vel = torch.linalg.norm(sim.get_joint_vel(), dim=1)  # (num_envs,)
 
-        return (self.weights["ee_to_goal"] * dist 
-                + self.weights["robot_ori"] * robot_ori
-                + self.weights["joint_vel"]    * joint_vel
-                )
+        forces    = sim.get_contact_forces(0)           # (num_envs, 1, 3)
+        collision = torch.abs(forces[:, 0, 2])          # Z component
+        print(collision)
+
+        weighted = {
+            "ee_to_goal": self.weights["ee_to_goal"] * dist,
+            "robot_ori":  self.weights["robot_ori"]  * robot_ori,
+            "joint_vel":  self.weights["joint_vel"]  * joint_vel,
+            "collision":  self.weights["collision"]  * collision,
+        }
+
+        for k, v in weighted.items():
+            self._cost_avg[k] = ((1 - self._EMA_ALPHA) * self._cost_avg[k]
+                                 + self._EMA_ALPHA * v.mean().item())
+
+        self._call_count += 1
+        if self._call_count % self._PLOT_INTERVAL == 0:
+            self._update_plot()
+
+        return sum(weighted.values())
 
 
 # ===========================================================================
@@ -216,6 +257,14 @@ def main():
         prior=None,
         # object_cfgs=make_block_cfgs(),
         static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
+        contact_sensor_cfgs=[
+        ContactSensorCfg(
+            prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
+            update_period=0.0,
+            history_length=0,
+            debug_vis=False,
+            )
+        ],
     )
 
     server = zerorpc.Server(planner)

@@ -41,6 +41,7 @@ import sys
 import torch
 import yaml
 import zerorpc
+import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -57,7 +58,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
 from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_stacked_robot.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -68,6 +69,8 @@ from examples.ur16e_reach_stand_stacked_robot.scene import make_static_cfgs, mak
 class IsaacLabCfg:
     dt: float = 1.0 / 60.0
     visualize_rollouts: bool = True
+    render: bool = False
+    env_spacing: float = 1.5
 
 
 @dataclass
@@ -94,9 +97,9 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.nx              = raw.get("nx",              cfg.nx)
     cfg.goal            = raw.get("goal",            cfg.goal)
     cfg.ee_link_name    = raw.get("ee_link_name",    cfg.ee_link_name)
-    cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
     cfg.solution_path   = raw.get("solution_path",   cfg.solution_path)
     cfg.step_threshold  = raw.get("step_threshold",  cfg.step_threshold)
+    cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
 
@@ -108,6 +111,8 @@ def _load_config(yaml_path: str) -> PlannerConfig:
         cfg.isaaclab = IsaacLabCfg(
             dt=il.get("dt", 1.0 / 60.0),
             visualize_rollouts=il.get("visualize_rollouts", True),
+            render=not args_cli.headless,
+            env_spacing=il.get("env_spacing", 1.5),
         )
 
     return cfg
@@ -166,6 +171,9 @@ class Objective:
 
     TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.115])
 
+    _PLOT_INTERVAL = 50
+    _EMA_ALPHA     = 0.05
+
     def __init__(self, cfg: PlannerConfig):
         self.weights = {
             # "robot_to_obj": 30.0,
@@ -182,11 +190,11 @@ class Objective:
             # "collision":     1.0,
             "robot_to_obj":  5.0,
             "obj_to_goal":   25.0,
-            "robot_ori":      5.0,
+            "robot_ori":      3.0,
             "height_match":  20.0,
             "push_align":    45.0,
-            "collision":      1.0,
-            "joint_vel":      2.25, #.25,
+            "collision":      2.0,
+            "joint_vel":      3.0, #.25,
         }
         self.step_threshold = cfg.step_threshold
 
@@ -199,6 +207,22 @@ class Objective:
         self._first_call = True
         self._printed_initial_poses = False
 
+        self._labels = list(self.weights.keys())
+        self._cost_avg = {k: 0.0 for k in self._labels}
+        self._call_count = 0
+
+        plt.ion()
+        colors = ["steelblue", "tomato", "forestgreen", "goldenrod",
+                  "mediumpurple", "darkorange", "teal"]
+        self._fig, self._ax = plt.subplots(figsize=(8, 4))
+        self._fig.suptitle("Avg weighted cost per component (across trajectories)")
+        self._bars = self._ax.bar(self._labels, [0.0] * len(self._labels),
+                                  color=colors[:len(self._labels)])
+        self._ax.set_ylabel("Avg weighted cost")
+        self._ax.set_ylim(0, 10)
+        plt.tight_layout()
+        plt.show()
+
         print(f"[Objective] Loaded {len(self.steps)} steps from {cfg.solution_path}")
         for i, step in enumerate(self.steps):
             print(f"  Step {i}: push {step['obj_name']} (idx {step['obj_idx']}) → {step['end_pos']}")
@@ -209,6 +233,12 @@ class Objective:
         print("[Objective] Final object world poses:")
         for name, (idx, pos) in final_poses.items():
             print(f"  {name} (idx {idx}): {pos}")
+
+    def _update_plot(self):
+        for bar, label in zip(self._bars, self._labels):
+            bar.set_height(self._cost_avg[label])
+        self._fig.canvas.draw_idle()
+        self._fig.canvas.flush_events()
 
     def reset(self):
         """Advance to next step if current block reached its goal."""
@@ -247,9 +277,10 @@ class Objective:
         tcp_offset = self.TCP_OFFSET_LOCAL.to(device).expand(sim.num_envs, 3)
         tcp_pos = ee_pos + _quat_apply(ee_quat, tcp_offset)  # (num_envs, 3)
 
-        # All steps done — zero cost
+        # All steps done — penalise joint velocity so MPPI drives the robot to a stop
         if self.current_step >= len(self.steps):
-            return torch.zeros(sim.num_envs, device=device)
+            joint_vel = torch.linalg.norm(sim.get_joint_vel(), dim=1)
+            return 100.0 * joint_vel
 
         step = self.steps[self.current_step]
         obj_idx  = step["obj_idx"]
@@ -279,6 +310,7 @@ class Objective:
 
         # Height match: TCP Z ≈ block Z
         height_match = torch.abs(tcp_pos[:, 2] - obj_pos[:, 2])
+        print(torch.mean(height_match))
 
         # Push alignment: 0 when TCP is directly behind block, 2 when in front.
         # Gated by distance: fades to zero when TCP is already at the block so
@@ -303,15 +335,25 @@ class Objective:
                   height_match, push_align, collision, joint_vel):
             t[torch.isnan(t)] = 100.0
 
-        return (
-            self.weights["robot_to_obj"] * robot_to_obj_dist
-            + self.weights["obj_to_goal"]  * obj_to_goal_dist
-            + self.weights["robot_ori"]    * robot_ori
-            + self.weights["push_align"]   * push_align
-            + self.weights["height_match"] * height_match
-            + self.weights["collision"]    * collision
-            + self.weights["joint_vel"]    * joint_vel
-        )
+        weighted = {
+            "robot_to_obj": self.weights["robot_to_obj"] * robot_to_obj_dist,
+            "obj_to_goal":  self.weights["obj_to_goal"]  * obj_to_goal_dist,
+            "robot_ori":    self.weights["robot_ori"]    * robot_ori,
+            "height_match": self.weights["height_match"] * height_match,
+            "push_align":   self.weights["push_align"]   * push_align,
+            "collision":    self.weights["collision"]    * collision,
+            "joint_vel":    self.weights["joint_vel"]    * joint_vel,
+        }
+
+        for k, v in weighted.items():
+            self._cost_avg[k] = ((1 - self._EMA_ALPHA) * self._cost_avg[k]
+                                 + self._EMA_ALPHA * v.mean().item())
+
+        self._call_count += 1
+        if self._call_count % self._PLOT_INTERVAL == 0:
+            self._update_plot()
+
+        return sum(weighted.values())
 
 
 # ===========================================================================

@@ -28,7 +28,7 @@ ee_link_name: "wrist_3_link"
 mppi:
   mppi_mode: "halton-spline"
   sampling_method: "halton"
-  num_samples: 750
+  num_samples: 250
   horizon: 24
   device: "cuda:0"
   u_min: [-0.2]
