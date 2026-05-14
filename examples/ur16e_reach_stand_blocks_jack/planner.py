@@ -70,7 +70,7 @@ from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
 from isaaclab_mpc.cost import (
     DistCost, OrientationCost, HeightMatchCost, PushAlignCost,
-    ContactForceCost, JointVelCost, SingularityCost,
+    ContactForceCost, JointVelCost, SingularityCost, GaussianProjection,
 )
 from isaaclab_mpc.cost.utils import quat_apply
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
@@ -102,9 +102,37 @@ class CostWeights:
 
 
 @dataclass
+class GaussianProjParams:
+    """Parameters for one cost term's Gaussian projection. c=0 → passthrough."""
+    n: int   = 1
+    c: float = 0.0
+    s: float = 0.0
+    r: float = 0.0
+
+
+@dataclass
+class GaussianProjectionConfig:
+    """Per-cost Gaussian projection params. Inactive when enabled=False or c=0.
+
+    n=2 → f(0)=0, f(∞)=1: ideal for distance/angle costs (zero error = zero cost).
+    n=1 → f(0)=2, f(∞)=1: bump semantics (penalise proximity to a point).
+    """
+    enabled:      bool               = False
+    robot_to_obj: GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.5, r=1e-5))
+    obj_to_goal:  GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.5, r=1e-5))
+    height_match: GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.3, r=1e-5))
+    robot_ori:    GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=1.0, r=1e-5))
+    joint_vel:    GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=1.0, r=1e-5))
+    push_align:   GaussianProjParams = field(default_factory=GaussianProjParams)
+    collision:    GaussianProjParams = field(default_factory=GaussianProjParams)
+    singularity:  GaussianProjParams = field(default_factory=GaussianProjParams)
+
+
+@dataclass
 class CostConfig:
     weights: CostWeights = field(default_factory=CostWeights)
     push_align_gate_width: float = 0.03
+    gaussian_projection: GaussianProjectionConfig = field(default_factory=GaussianProjectionConfig)
 
 
 @dataclass
@@ -164,6 +192,22 @@ def _load_config(yaml_path: str) -> PlannerConfig:
             cfg.costs.weights = CostWeights(**{k: float(v) for k, v in c["weights"].items()})
         if "push_align_gate_width" in c:
             cfg.costs.push_align_gate_width = float(c["push_align_gate_width"])
+        if "gaussian_projection" in c:
+            gp_raw = c["gaussian_projection"]
+            gp = GaussianProjectionConfig()
+            gp.enabled = bool(gp_raw.get("enabled", False))
+            _cost_keys = ["robot_to_obj", "obj_to_goal", "robot_ori", "height_match",
+                          "push_align", "joint_vel", "collision", "singularity"]
+            for key in _cost_keys:
+                if key in gp_raw:
+                    p = gp_raw[key]
+                    setattr(gp, key, GaussianProjParams(
+                        n=int(p.get("n", 1)),
+                        c=float(p.get("c", 0.0)),
+                        s=float(p.get("s", 0.0)),
+                        r=float(p.get("r", 0.0)),
+                    ))
+            cfg.costs.gaussian_projection = gp
 
     return cfg
 
@@ -230,6 +274,20 @@ class Objective:
             "joint_vel":    JointVelCost(),
             "singularity":  SingularityCost(),
         }
+
+        gp_cfg = cfg.costs.gaussian_projection
+        if gp_cfg.enabled:
+            self._projections = {
+                k: GaussianProjection(n=getattr(gp_cfg, k).n,
+                                      c=getattr(gp_cfg, k).c,
+                                      s=getattr(gp_cfg, k).s,
+                                      r=getattr(gp_cfg, k).r)
+                for k in self._costs
+            }
+            _active = [k for k in self._costs if getattr(gp_cfg, k).c != 0]
+            print(f"[Objective] GaussianProjection enabled for: {_active}")
+        else:
+            self._projections = {}
 
         print(f"[Objective] Loaded {len(self.steps)} steps from {cfg.solution_path}")
         for i, step in enumerate(self.steps):
@@ -353,6 +411,9 @@ class Objective:
 
         for t in raw.values():
             t[torch.isnan(t)] = 100.0
+
+        for k, proj in self._projections.items():
+            raw[k] = proj(raw[k])
 
         if self._debug_capture:
             self._debug_last_terms = [
