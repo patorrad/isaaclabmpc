@@ -174,6 +174,7 @@ class MPPIIsaacLabPlanner:
 
         # Optimise and return best first action
         actions = self.mppi.command(self._state_ph)
+        self.objective.update_debug_plot()
         return actions.detach().cpu()
 
     # ------------------------------------------------------------------
@@ -227,6 +228,7 @@ class MPPIIsaacLabPlanner:
 
     def _command(self) -> bytes:
         action = self.mppi.command(self._state_ph)
+        self.objective.update_debug_plot()
         # torch.cuda.synchronize()
         return torch_to_bytes(action)
 

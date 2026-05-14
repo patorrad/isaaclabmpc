@@ -18,6 +18,7 @@ End-effector link used for MPPI cost: ``wrist_3_link``
 """
 
 import os
+import xml.etree.ElementTree as ET
 
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import ImplicitActuatorCfg
@@ -34,6 +35,29 @@ _ASSETS_DIR = os.path.join(
     "urdf",
 )
 UR16E_URDF_PATH = os.path.normpath(os.path.join(_ASSETS_DIR, "ur16e.urdf"))
+
+
+def get_tool_length() -> float:
+    """Return the TCP tip distance (metres) from the URDF tool0 collision cylinder.
+
+    Computed as cylinder_center_z + cylinder_length / 2, which equals the tip
+    of the cylinder along +Z in the tool0 frame (== wrist_3_link frame after
+    merge_fixed_joints).  This is the authoritative source so that planner cost
+    terms and visualisation always stay in sync with the physical geometry.
+    """
+    root = ET.parse(UR16E_URDF_PATH).getroot()
+    for link in root.iter("link"):
+        if link.get("name") == "tool0":
+            collision = link.find("collision")
+            if collision is not None:
+                cyl = collision.find("geometry/cylinder")
+                origin = collision.find("origin")
+                if cyl is not None and origin is not None:
+                    center_z = float(origin.get("xyz", "0 0 0").split()[2])
+                    length = float(cyl.get("length"))
+                    return center_z + length / 2.0
+    raise RuntimeError(f"Could not find tool0 collision cylinder in {UR16E_URDF_PATH}")
+
 
 # ---------------------------------------------------------------------------
 # ArticulationCfg

@@ -1,0 +1,14 @@
+n_obstacles: 2
+n_z_levels: 3
+target_z_level: 1   # target is in the middle of the stack
+
+# All three objects share the same (x, y) column.
+# z-levels: floor=0.025, mid=0.075, top=0.125  (OBJ_H + i * OBJ_SIZE)
+initial_state:
+  target_pos: [0.108, 0.13, 0.075]   # middle block
+  target_quat: [1.0, 0.0, 0.0, 0.0]
+  obstacles:
+    - pos: [0.108, 0.13, 0.025]      # bottom block
+      quat: [1.0, 0.0, 0.0, 0.0]
+    - pos: [0.108, 0.13, 0.125]      # top block
+      quat: [1.0, 0.0, 0.0, 0.0]
