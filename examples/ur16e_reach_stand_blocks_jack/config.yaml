@@ -162,3 +162,17 @@ costs:
     joint_vel:     0.0    # joint velocity magnitude
     singularity:   0.05   # reciprocal manipulability (1/|det J|)
   push_align_gate_width: 0.03   # sigmoid transition width (metres)
+  gaussian_projection:
+    # Set enabled: true to map each cost through a Gaussian-shaped transfer:
+    #   f(x) = 1 - (-1)^n * exp(-(x-s)^2 / (2c^2)) + r*(x-s)^4
+    # c=0 → passthrough identity for that term.
+    enabled: false
+    # n=2 → f(0)=0, f(∞)=1 (ideal: zero error costs zero, saturates to 1 far away)
+    robot_to_obj: {n: 2, c: 0.5, s: 0.0, r: 1.0e-5}
+    obj_to_goal:  {n: 2, c: 0.5, s: 0.0, r: 1.0e-5}
+    height_match: {n: 2, c: 0.3, s: 0.0, r: 1.0e-5}
+    robot_ori:    {n: 2, c: 1.0, s: 0.0, r: 1.0e-5}
+    joint_vel:    {n: 2, c: 1.0, s: 0.0, r: 1.0e-5}
+    push_align:   {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    collision:    {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    singularity:  {n: 2, c: 0.0, s: 0.0, r: 0.0}
