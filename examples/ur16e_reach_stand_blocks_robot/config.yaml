@@ -136,3 +136,14 @@ isaaclab:
   # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m
   env_spacing: 3.0
 stand_urdf: "/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/stand/stand.urdf"
+
+costs:
+  weights:
+    robot_to_obj:  5.0    # TCP distance to current block
+    obj_to_goal:  25.0    # block distance to its goal
+    robot_ori:     5.0    # wrist polar tilt from straight-down (arccos)
+    height_match: 20.0    # TCP Z vs block Z
+    push_align:   45.0    # TCP behind block relative to push direction
+    collision:     1.0    # wrist contact force (Z component)
+    joint_vel:     2.25   # joint velocity magnitude
+  push_align_gate_width: 0.03   # sigmoid transition width (metres)
