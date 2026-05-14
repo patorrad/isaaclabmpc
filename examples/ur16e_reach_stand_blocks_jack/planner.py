@@ -25,6 +25,13 @@ import argparse
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="UR16e MPPI reach planner (Isaac Lab)")
+parser.add_argument("--scenario", type=str, default=None,
+                    help="Path to a puzzles YAML scenario file. "
+                         "Overrides the hardcoded block positions in scene.py.")
+parser.add_argument("--solution_path", type=str, default=None,
+                    help="Path to puzzle solution JSON. Overrides cfg.solution_path.")
+parser.add_argument("--telemetry_path", type=str, default=None,
+                    help="If set, write MPPI cost history and step events as JSON on exit.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
 args_cli.headless = True          # planner always runs headless
@@ -35,9 +42,13 @@ simulation_app = app_launcher.app
 # ===========================================================================
 # 2. All other imports (safe now that the app is running)
 # ===========================================================================
+import json
 import os
+import signal
 import sys
+import time
 
+import matplotlib.pyplot as plt
 import torch
 import yaml
 import zerorpc
@@ -49,15 +60,17 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-import json
+# Module-level reference set in main() so the SIGTERM handler can write telemetry.
+_objective_ref = None
 
 from mppi_torch.mppi import MPPIConfig
 from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
-from robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
+from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
+from robots import STAND_URDF_PATH as _STAND_URDF_PATH
+from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
 
 
 # ===========================================================================
@@ -68,6 +81,7 @@ from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block
 class IsaacLabCfg:
     dt: float = 1.0 / 60.0
     visualize_rollouts: bool = True
+    debug: bool = False
 
 
 @dataclass
@@ -77,8 +91,9 @@ class PlannerConfig:
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
     solution_path: str = "solution_obs_3_simple_extraction_robot.json"
+    scenario: Optional[str] = None
     step_threshold: float = 0.02
-    stand_urdf: str = ""
+    stand_urdf: str = _STAND_URDF_PATH
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
@@ -89,12 +104,20 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     with open(yaml_path) as f:
         raw = yaml.safe_load(f)
 
+    cfg_dir = os.path.dirname(os.path.abspath(yaml_path))
+
+    def _resolve(p: Optional[str]) -> Optional[str]:
+        if p is None:
+            return None
+        return p if os.path.isabs(p) else os.path.join(cfg_dir, p)
+
     cfg = PlannerConfig()
     cfg.n_steps         = raw.get("n_steps",         cfg.n_steps)
     cfg.nx              = raw.get("nx",              cfg.nx)
     cfg.goal            = raw.get("goal",            cfg.goal)
     cfg.ee_link_name    = raw.get("ee_link_name",    cfg.ee_link_name)
-    cfg.solution_path   = raw.get("solution_path",   cfg.solution_path)
+    cfg.solution_path   = _resolve(raw.get("solution_path", cfg.solution_path))
+    cfg.scenario        = _resolve(raw.get("scenario",      cfg.scenario))
     cfg.step_threshold  = raw.get("step_threshold",  cfg.step_threshold)
     cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
@@ -108,6 +131,7 @@ def _load_config(yaml_path: str) -> PlannerConfig:
         cfg.isaaclab = IsaacLabCfg(
             dt=il.get("dt", 1.0 / 60.0),
             visualize_rollouts=il.get("visualize_rollouts", True),
+            debug=il.get("debug", False),
         )
 
     return cfg
@@ -164,9 +188,7 @@ class Objective:
       push_align    — TCP is behind the block relative to the push direction
     """
 
-    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.115])
-
-    def __init__(self, cfg: PlannerConfig):
+    def __init__(self, cfg: PlannerConfig, debug: bool = False):
         self.weights = {
             # "robot_to_obj": 30.0,
             # "obj_to_goal":  40.0,
@@ -180,20 +202,34 @@ class Objective:
             # "height_match": 20.0,
             # "push_align":   40.0,
             # "collision":     1.0,
+            # "robot_to_obj":  5.0,
+            # "obj_to_goal":   25.0,
+            # "robot_ori":      5.0,
+            # "height_match":  20.0,
+            # "push_align":    45.0,
+            # "collision":      1.0,
+            # "joint_vel":      2.25, #.25,
             "robot_to_obj":  5.0,
             "obj_to_goal":   25.0,
-            "robot_ori":      5.0,
+            "robot_ori":      15.0,
             "height_match":  20.0,
             "push_align":    45.0,
             "collision":      1.0,
-            "joint_vel":      2.25, #.25,
+            "joint_vel":      0.,
+            "singularity":    0.05,  # reciprocal manipulability; tune up to penalise near-singular configs
         }
         self.step_threshold = cfg.step_threshold
+        self.tcp_offset_local = torch.tensor([0.0, 0.0, get_tool_length()])
+        self._t_start = time.time()
+        self._cost_history: list[float] = []
+        self._step_events: list[dict] = []
 
         with open(cfg.solution_path) as f:
             solution = json.load(f)
 
         self.steps = solution["steps"]
+        obj_size = solution.get("env_config", {}).get("OBJ_SIZE", 0.05)
+        self.align_gate_dist = obj_size / 2 + 0.01  # back face + 1 cm standoff
         self.current_step = 0
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True
@@ -210,6 +246,25 @@ class Objective:
         for name, (idx, pos) in final_poses.items():
             print(f"  {name} (idx {idx}): {pos}")
 
+        self.debug = debug
+        self._debug_term_keys = ["robot_to_obj", "obj_to_goal", "robot_ori",
+                                  "height_match", "push_align", "collision", "joint_vel",
+                                  "singularity"]
+        self._debug_last_terms: list = [0.0] * len(self._debug_term_keys)
+        self._debug_capture = False
+        if debug:
+            self._init_debug_plot()
+
+    def _init_debug_plot(self):
+        plt.ion()
+        self._fig, self._ax = plt.subplots(figsize=(9, 4))
+        labels = [f"{k}\n(w={self.weights[k]})" for k in self._debug_term_keys]
+        self._bars = self._ax.bar(labels, [0.0] * len(self._debug_term_keys), color="steelblue")
+        self._ax.set_ylabel("Weighted cost (env 0)")
+        self._ax.set_title("MPPI cost terms")
+        self._fig.tight_layout()
+        plt.show(block=False)
+
     def reset(self):
         """Advance to next step if current block reached its goal."""
         if self._last_obj_pos is not None and self.current_step < len(self.steps):
@@ -218,6 +273,10 @@ class Objective:
             dist = torch.linalg.norm(self._last_obj_pos.cpu() - goal).item()
             if dist < self.step_threshold:
                 self.current_step += 1
+                self._step_events.append({
+                    "step_idx": self.current_step,
+                    "elapsed_s": time.time() - self._t_start,
+                })
                 if self.current_step < len(self.steps):
                     ns = self.steps[self.current_step]
                     print(f"\n[Step {self.current_step}/{len(self.steps)}] "
@@ -225,6 +284,20 @@ class Objective:
                 else:
                     print(f"\n[Step] All {len(self.steps)} steps completed!")
         self._first_call = True
+        self._debug_capture = self.debug
+
+    def update_debug_plot(self):
+        if not self.debug:
+            return
+        for bar, val in zip(self._bars, self._debug_last_terms):
+            bar.set_height(val)
+        self._ax.relim()
+        self._ax.autoscale_view()
+        step_info = (f"Step {self.current_step}/{len(self.steps)}"
+                     if self.current_step < len(self.steps) else "All steps done")
+        self._ax.set_title(f"MPPI cost terms — {step_info}")
+        self._fig.canvas.draw()
+        self._fig.canvas.flush_events()
 
     def compute_cost(self, sim) -> torch.Tensor:
         device = sim.device
@@ -244,7 +317,7 @@ class Objective:
         # TCP tip position
         ee_pos  = sim.get_ee_pos()   # (num_envs, 3)
         ee_quat = sim.get_ee_quat()  # (num_envs, 4)
-        tcp_offset = self.TCP_OFFSET_LOCAL.to(device).expand(sim.num_envs, 3)
+        tcp_offset = self.tcp_offset_local.to(device).expand(sim.num_envs, 3)
         tcp_pos = ee_pos + _quat_apply(ee_quat, tcp_offset)  # (num_envs, 3)
 
         # All steps done — zero cost
@@ -280,9 +353,9 @@ class Objective:
         # Height match: TCP Z ≈ block Z
         height_match = torch.abs(tcp_pos[:, 2] - obj_pos[:, 2])
 
-        # Push alignment: 0 when TCP is directly behind block, 2 when in front.
-        # Gated by distance: fades to zero when TCP is already at the block so
-        # the robot stops trying to reposition and just pushes.
+        # Push alignment: cosine similarity between (TCP→block) and (block→goal),
+        # shifted by +1 so the range is [0, 2]: 0 = TCP directly behind block
+        # (ideal approach), 2 = TCP directly in front (worst case).
         r2b_2d = robot_to_obj[:, :2]
         b2g_2d = obj_to_goal[:, :2]
         push_align = (
@@ -291,7 +364,10 @@ class Objective:
                * torch.linalg.norm(b2g_2d, dim=1).clamp(min=1e-6))
             + 1.0
         )
-        align_gate = torch.sigmoid((robot_to_obj_dist - 0.08) / 0.03)
+        # Gate fades the alignment cost to zero once the TCP reaches the back face
+        # of the object (obj_size/2 + 1 cm standoff), so the robot stops trying to
+        # reposition and commits to pushing. Sigmoid width 0.03 m ≈ 3 cm transition.
+        align_gate = torch.sigmoid((robot_to_obj_dist - self.align_gate_dist) / 0.03)
         push_align = push_align * align_gate
 
         forces    = sim.get_contact_forces(0)           # (num_envs, 1, 3)
@@ -299,28 +375,71 @@ class Objective:
 
         joint_vel = torch.linalg.norm(sim.get_joint_vel(), dim=1)  # (num_envs,)
 
+        J = sim.get_ee_jacobian()                          # (num_envs, 6, 6)
+        det_J = torch.abs(torch.linalg.det(J))             # (num_envs,)
+        singularity = 1.0 / (det_J + 1e-6)                # (num_envs,); large near singularity
+
         for t in (robot_to_obj_dist, obj_to_goal_dist, robot_ori,
-                  height_match, push_align, collision, joint_vel):
+                  height_match, push_align, collision, joint_vel,
+                  singularity):
             t[torch.isnan(t)] = 100.0
 
-        return (
-            self.weights["robot_to_obj"] * robot_to_obj_dist
-            + self.weights["obj_to_goal"]  * obj_to_goal_dist
-            + self.weights["robot_ori"]    * robot_ori
-            + self.weights["push_align"]   * push_align
-            + self.weights["height_match"] * height_match
-            + self.weights["collision"]    * collision
-            + self.weights["joint_vel"]    * joint_vel
+        if self._debug_capture:
+            raw_terms = [robot_to_obj_dist, obj_to_goal_dist, robot_ori,
+                         height_match, push_align, collision, joint_vel,
+                         singularity]
+            self._debug_last_terms = [
+                (self.weights[k] * t[0]).item()
+                for k, t in zip(self._debug_term_keys, raw_terms)
+            ]
+            self._debug_capture = False
+
+        cost = (
+            self.weights["robot_to_obj"]  * robot_to_obj_dist
+            + self.weights["obj_to_goal"]   * obj_to_goal_dist
+            + self.weights["robot_ori"]     * robot_ori
+            + self.weights["push_align"]    * push_align
+            + self.weights["height_match"]  * height_match
+            + self.weights["collision"]     * collision
+            + self.weights["joint_vel"]     * joint_vel
+            + self.weights["singularity"]   * singularity
         )
+        self._cost_history.append(float(cost.min().item()))
+        return cost
 
 
 # ===========================================================================
 # 5. Main
 # ===========================================================================
 
+def _write_telemetry(path: str, objective: 'Objective') -> None:
+    data = {
+        "mppi_cost_history": objective._cost_history,
+        "step_completion_events": objective._step_events,
+    }
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f"[planner] Telemetry written to {path}")
+
+
 def main():
+    global _objective_ref
+
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
+
+    # Apply CLI overrides
+    if args_cli.solution_path:
+        cfg.solution_path = args_cli.solution_path
+
+    scenario_path = args_cli.scenario or cfg.scenario
+    block_positions = None
+    if scenario_path is not None:
+        with open(scenario_path) as f:
+            sc = yaml.safe_load(f)
+        is_ = sc["initial_state"]
+        bin_positions = [is_["target_pos"]] + [o["pos"] for o in is_["obstacles"]]
+        block_positions = [_bin_to_mppi_local(p) for p in bin_positions]
 
     robot_contact_sensor = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
@@ -341,13 +460,22 @@ def main():
         )
     )
 
-    objective = Objective(cfg)
+    objective = Objective(cfg, debug=cfg.isaaclab.debug)
+    _objective_ref = objective
+
+    def _sigterm_handler(*_):
+        if args_cli.telemetry_path and _objective_ref is not None:
+            _write_telemetry(args_cli.telemetry_path, _objective_ref)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+
     planner = MPPIIsaacLabPlanner(
         cfg,
         objective,
         robot_cfg=robot_cfg,
         prior=None,
-        object_cfgs=make_block_cfgs(),
+        object_cfgs=make_block_cfgs(positions=block_positions),
         static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
         contact_sensor_cfgs=[robot_contact_sensor],
     )

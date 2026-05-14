@@ -56,7 +56,9 @@ step_threshold: 0.04
 n_steps: 10000
 
 # World-frame position of the robot base [x, y, z] (metres)
-robot_init_pos: [0.20, 0.0, 2.075] #1.9] #2.075]
+# Original (pre-103611a): robot_init_pos: [0.208, 0.0, 2.075]  # Z lowered to 1.775 to reduce arm extension; Y shifted to -0.5 to reduce singularities
+robot_init_pos: [0.208, -0.3, 1.775]
+# robot_init_pos: [0.208, -0.5, 2.075]
 
 # Initial joint angles [rad]: shoulder_pan, shoulder_lift, elbow,
 #                              wrist_1, wrist_2, wrist_3
@@ -71,7 +73,12 @@ goal: [0.40, 0.10, 1.00]
 
 # # Path to the RRT solution JSON that defines the push sequence
 # solution_path: "/home/paolo/Documents/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution_obs_3_simple_extraction_robot.json"
-solution_path: "/home/jack/research/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution.json"
+# solution_path: "/home/jack/research/isaaclabmpc/examples/ur16e_reach_stand_blocks/solution.json"
+solution_path: "/home/jack/research/puzzles/cube27_plan.json"
+
+# Path to a puzzles scenario YAML (overrides hardcoded block positions in scene.py).
+# Can be relative to this config file or absolute. Also settable via --scenario CLI arg.
+scenario: "/home/jack/research/puzzles/conf/scenario/cube27.yaml"
 
 # End-effector body name in the Isaac Lab articulation.
 # With merge_fixed_joints=True in UrdfFileCfg, tool0/flange are merged
@@ -108,11 +115,11 @@ ee_link_name: "wrist_3_link"
 mppi:
   mppi_mode: "halton-spline"
   sampling_method: "halton"
-  num_samples: 1000
-  horizon: 24
+  num_samples: 128
+  horizon: 50
   device: "cuda:0"
-  u_min: [-0.2]
-  u_max: [0.2]
+  u_min: [-0.8]
+  u_max: [0.8]
   lambda_: 0.5
   noise_sigma:
     - [0.2, 0.0,  0.0,  0.0,  0.0,  0.0]
@@ -131,8 +138,15 @@ mppi:
 # Isaac Lab physics parameters
 isaaclab:
   dt: 0.016667 #0.0035
+  debug: true
   visualize_rollouts: true
+  debug: true
   # Table is 2.5m in Y — envs must be spaced far enough that tables don't overlap.
   # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m
   env_spacing: 3.0
-stand_urdf: "/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/stand/stand.urdf"
+viewer:
+  # x, y in world frame; z is height ABOVE the table surface.
+  # Table top z is queried from the USD prim at runtime, so this tracks
+  # the table automatically if it moves.
+  lookat: [0.25, 0.0, 0.04]   # centre of block manipulation area
+  eye:    [1.50, 0.0, 0.60]   # across from robot, elevated

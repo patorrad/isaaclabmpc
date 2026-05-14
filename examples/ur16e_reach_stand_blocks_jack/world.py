@@ -36,9 +36,14 @@ from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="UR16e world runner")
 parser.add_argument("--n_steps", type=int, default=100000)
+parser.add_argument("--scenario", type=str, default=None,
+                    help="Path to a puzzles YAML scenario file. "
+                         "Overrides the hardcoded block positions in scene.py.")
 parser.add_argument("--planner_addr", type=str, default="tcp://localhost:4242")
 parser.add_argument("--n_rollouts_draw", type=int, default=50,
                     help="Number of MPPI rollout trajectories to visualise (0 = off)")
+parser.add_argument("--output_path", type=str, default=None,
+                    help="If set, write a result JSON (success, ee_trajectory, etc.) on exit.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
 
@@ -48,6 +53,7 @@ simulation_app = app_launcher.app
 # ===========================================================================
 # 2. All other imports
 # ===========================================================================
+import json
 import os
 import sys
 import time
@@ -57,7 +63,7 @@ import torch
 import yaml
 import zerorpc
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if _PROJECT_ROOT not in sys.path:
@@ -66,8 +72,9 @@ if _PROJECT_ROOT not in sys.path:
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs
+from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
+from robots import STAND_URDF_PATH as _STAND_URDF_PATH
+from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
 
 
 # ===========================================================================
@@ -85,14 +92,25 @@ class WorldConfig:
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
     ee_link_name: str = "wrist_3_link"
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
-    stand_urdf: str = ""
+    stand_urdf: str = _STAND_URDF_PATH
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
+    scenario: Optional[str] = None
+    viewer_lookat: List[float] = field(default_factory=lambda: [0.25, 0.0, 0.04])
+    viewer_eye:    List[float] = field(default_factory=lambda: [1.50, 0.0, 0.60])
 
 
 def _load_config(yaml_path: str) -> WorldConfig:
     with open(yaml_path) as f:
         raw = yaml.safe_load(f)
+
+    cfg_dir = os.path.dirname(os.path.abspath(yaml_path))
+
+    def _resolve(p: Optional[str]) -> Optional[str]:
+        if p is None:
+            return None
+        return p if os.path.isabs(p) else os.path.join(cfg_dir, p)
+
     cfg = WorldConfig()
     cfg.n_steps = raw.get("n_steps", cfg.n_steps)
     cfg.goal = raw.get("goal", cfg.goal)
@@ -100,15 +118,38 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.stand_urdf        = raw.get("stand_urdf",        cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+    cfg.scenario          = _resolve(raw.get("scenario", cfg.scenario))
 
     if "isaaclab" in raw:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
+    if "viewer" in raw:
+        v = raw["viewer"]
+        cfg.viewer_lookat = v.get("lookat", cfg.viewer_lookat)
+        cfg.viewer_eye    = v.get("eye",    cfg.viewer_eye)
     return cfg
 
 
 # ===========================================================================
-# 4. Keyboard goal control
+# 4. Camera helpers
+# ===========================================================================
+
+def _get_table_top_z() -> float:
+    """Query the USD stage for the table prim's world bounding-box top.
+
+    The table is the second static object (static_1) in make_static_cfgs().
+    Returns the Z coordinate of the table surface in world frame.
+    """
+    from pxr import UsdGeom, Usd
+    import omni.usd
+    stage = omni.usd.get_context().get_stage()
+    prim = stage.GetPrimAtPath("/World/envs/env_0/Static1")
+    bbox = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default"]).ComputeWorldBound(prim)
+    return float(bbox.GetRange().GetMax()[2])
+
+
+# ===========================================================================
+# 5. Keyboard goal control
 # ===========================================================================
 
 class GoalController:
@@ -155,7 +196,7 @@ class GoalController:
 
 
 # ===========================================================================
-# 5. Rollout + goal visualisation
+# 6. Rollout + goal visualisation
 # ===========================================================================
 
 def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
@@ -254,7 +295,7 @@ class RolloutVisualiser:
 
 
 # ===========================================================================
-# 6. Control loop
+# 7. Control loop
 # ===========================================================================
 
 def main():
@@ -262,6 +303,15 @@ def main():
     cfg = _load_config(cfg_path)
     cfg.n_steps = args_cli.n_steps
     headless = getattr(args_cli, "headless", False)
+
+    scenario_path = args_cli.scenario or cfg.scenario
+    block_positions = None
+    if scenario_path is not None:
+        with open(scenario_path) as f:
+            sc = yaml.safe_load(f)
+        is_ = sc["initial_state"]
+        bin_positions = [is_["target_pos"]] + [o["pos"] for o in is_["obstacles"]]
+        block_positions = [_bin_to_mppi_local(p) for p in bin_positions]
     n_rollouts_draw = 0 if headless else args_cli.n_rollouts_draw
 
     _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
@@ -289,19 +339,25 @@ def main():
         num_envs=1,
         ee_link_name=cfg.ee_link_name,
         goal=cfg.goal,
-        object_cfgs=make_block_cfgs(),
+        object_cfgs=make_block_cfgs(positions=block_positions),
         static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
     )
     device = world.device
     DOF = world.num_dof
 
+    # Set viewer camera — z offsets are above the table surface queried from USD
+    if not headless:
+        table_top_z = _get_table_top_z()
+        lookat = (cfg.viewer_lookat[0], cfg.viewer_lookat[1], table_top_z + cfg.viewer_lookat[2])
+        eye    = (cfg.viewer_eye[0],    cfg.viewer_eye[1],    table_top_z + cfg.viewer_eye[2])
+        world.sim_context.set_camera_view(eye, lookat)
+
     # Keyboard goal control
     GoalController(world._goal, world._goal_lock)
 
     # TCP offset: offset from wrist_3_link origin to tool tip in wrist_3_link frame.
-    # tool0 +Z == wrist_3_link +Z (fixed joint chain has no translation, only rotation).
-    # The pipe-nipple gripper cylinder extends 0.14 m along +Z.
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.12])
+    # Derived from the URDF tool0 collision cylinder — single source of truth.
+    tcp_offset_local = torch.tensor([0.0, 0.0, get_tool_length()])
 
     # Rollout visualiser (only when rendering)
     vis = RolloutVisualiser(tcp_offset_local) if not headless else None
@@ -324,7 +380,15 @@ def main():
     print(f"[world] Goal: {cfg.goal}  (use arrow keys / PgUp / PgDn to move)")
     print(f"[world] Body names: {list(world.robot.body_names)}")
 
-    t_prev = time.time()
+    t_start = time.time()
+    t_prev = t_start
+
+    # Telemetry buffers
+    ee_trajectory: list[list[float]] = []
+    block_positions_history: list[list[list[float]]] = []
+    step_completion_events: list[dict] = []
+    all_steps_done = False
+    prev_step_info = 0
 
     for step in range(cfg.n_steps):
         if not simulation_app.is_running():
@@ -369,14 +433,35 @@ def main():
         ee_pos = world.get_ee_pos()[0]            # (3,) local frame
 
         # ------------------------------------------------------------------
-        # 6. Logging — show TCP tip distance to current block goal
+        # 6. Logging + telemetry
         # ------------------------------------------------------------------
         try:
-            step_info = bytes_to_torch(planner.get_current_step()).item()
-            total_steps = bytes_to_torch(planner.get_total_steps()).item()
-            step_label = f"step {int(step_info)}/{int(total_steps)}"
+            step_info = int(bytes_to_torch(planner.get_current_step()).item())
+            total_steps = int(bytes_to_torch(planner.get_total_steps()).item())
+            step_label = f"step {step_info}/{total_steps}"
         except Exception:
-            step_label = ""
+            step_info, total_steps, step_label = prev_step_info, 0, ""
+
+        # Record step-completion transitions
+        if step_info != prev_step_info:
+            step_completion_events.append({
+                "step_idx": step_info,
+                "sim_step": step,
+                "elapsed_s": time.time() - t_start,
+            })
+            prev_step_info = step_info
+
+        # Sample EE position and block positions every 50 sim steps
+        if step % 50 == 0:
+            ee_trajectory.append(ee_pos.tolist())
+            block_positions_history.append([
+                world.get_object_pos(i)[0].tolist() for i in range(len(world.objects))
+            ])
+
+        # Check for completion every 100 steps
+        if step % 100 == 0 and total_steps > 0 and step_info >= total_steps:
+            all_steps_done = True
+            break
 
         elapsed = time.time() - t_prev
         t_prev = time.time()
@@ -390,6 +475,26 @@ def main():
         )
 
     print("\n[world] Done.")
+
+    # ------------------------------------------------------------------
+    # Write result JSON if requested
+    # ------------------------------------------------------------------
+    if args_cli.output_path:
+        block_positions_final = [
+            world.get_object_pos(i)[0].tolist() for i in range(len(world.objects))
+        ]
+        result = {
+            "success": all_steps_done,
+            "steps_completed": step_info,
+            "total_steps": total_steps,
+            "elapsed_time_s": time.time() - t_start,
+            "ee_trajectory": ee_trajectory,
+            "block_positions_final": block_positions_final,
+            "step_completion_events": step_completion_events,
+        }
+        with open(args_cli.output_path, 'w') as f:
+            json.dump(result, f, indent=2)
+        print(f"[world] Result written to {args_cli.output_path}")
 
 
 if __name__ == "__main__":
