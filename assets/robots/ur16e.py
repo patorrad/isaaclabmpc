@@ -115,10 +115,10 @@ UR16E_CFG = ArticulationCfg(
         "arm": ImplicitActuatorCfg(
             joint_names_expr=[".*_joint"],
             # UR16e continuous-current torques: ~330 Nm (shoulder), ~56 Nm (wrist)
-            effort_limit_sim=330.0,
-            velocity_limit_sim=3.14,          # ~180 deg/s
+            effort_limit_sim=330.0, #630.0,
+            velocity_limit_sim=6.28, #3.14,          # ~180 deg/s
             stiffness=0.0,                 # no position tracking
-            damping=200.0,                # velocity-tracking gain
+            damping=50.0,                # velocity-tracking gain
         ),
     },
 )

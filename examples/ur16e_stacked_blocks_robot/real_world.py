@@ -25,6 +25,10 @@ Usage:
         /home/paolo/miniconda3/envs/env_isaaclab/bin/python \\
         examples/ur16e_reach_stand/real_world.py
 
+Keyboard controls (viewer window):
+    Arrow keys  — move goal in X/Y  (+/- 2 cm per key press)
+    PgUp/PgDn   — move goal in Z
+    Ctrl-C      — quit
 """
 
 # ===========================================================================
@@ -69,7 +73,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks_robot.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_stacked_blocks_robot.scene import make_static_cfgs, make_block_cfgs
 
 # ===========================================================================
 # 3. Config
@@ -126,25 +130,35 @@ def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
 class RolloutVisualiser:
     ROLLOUT_COLOR = (0.1, 0.9, 0.1, 0.25)
     ROLLOUT_WIDTH = 1
-    GOAL_COLOR    = (1.0, 0.4, 0.0, 1.0)
-    GOAL_SIZE     = 15.0
+    TARGET_COLOR = (1.0, 0.1, 0.1, 1.0)
+    TARGET_SIZE  = 20.0
 
     def __init__(self, tcp_offset_local: torch.Tensor):
         from isaacsim.util.debug_draw import _debug_draw
         self._draw = _debug_draw.acquire_debug_draw_interface()
         self.tcp_offset_local = tcp_offset_local
 
-    def update(self, rollouts_bytes, goal, ee_quat_world, env_origin, n_draw):
+    def update(
+        self,
+        rollouts_bytes: bytes,
+        ee_quat_world: torch.Tensor,
+        env_origin: torch.Tensor,
+        n_draw: int,
+        target: torch.Tensor = None,
+    ):
         self._draw.clear_lines()
         self._draw.clear_points()
 
         origin = env_origin.cpu()
+
+        # Rotate TCP offset into world frame using current EE orientation
         tcp_offset_world = _quat_apply(ee_quat_world.cpu(), self.tcp_offset_local)
 
-        # Goal marker (local → world)
-        gp = tuple((goal.cpu() + origin).tolist())
-        self._draw.draw_points([gp], [self.GOAL_COLOR], [self.GOAL_SIZE])
+        if target is not None:
+            tp = tuple((target.cpu() + origin).tolist())
+            self._draw.draw_points([tp], [self.TARGET_COLOR], [self.TARGET_SIZE])
 
+        # ---- rollout trajectories ----
         if n_draw <= 0:
             return
 
@@ -152,9 +166,14 @@ class RolloutVisualiser:
         if rollouts.shape[0] < 1 or rollouts.shape[1] < 1:
             return
 
-        rollouts = rollouts.permute(1, 0, 2).cpu() + origin + tcp_offset_world
-        stride = max(1, rollouts.shape[0] // n_draw)
-        for traj in rollouts[::stride]:
+        # local → world, then shift to TCP tip
+        rollouts = rollouts.permute(1, 0, 2).cpu() + origin + tcp_offset_world  # (num_envs, H, 3)
+        num_envs = rollouts.shape[0]
+        # print(rollouts[0, 0, :])
+        stride = max(1, num_envs // n_draw)
+        rollouts_sub = rollouts[::stride]
+
+        for traj in rollouts_sub:
             pts = [tuple(p.tolist()) for p in traj]
             self._draw.draw_lines_spline(pts, self.ROLLOUT_COLOR, self.ROLLOUT_WIDTH, False)
 
@@ -169,6 +188,7 @@ def main():
 
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
+    n_rollouts_draw = args_cli.n_rollouts_draw
 
     _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, rot=(0, 1, 0, 0), joint_pos=cfg.robot_init_joints)
     robot_cfg = _base_robot_cfg.replace(
@@ -190,7 +210,7 @@ def main():
         robot_cfg=robot_cfg,
         num_envs=1,
         ee_link_name="wrist_3_link",
-        goal=cfg.goal,
+        goal=[0.4, 0.2, 0.6],
         object_cfgs=make_block_cfgs(),
         static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
     )
@@ -234,7 +254,8 @@ def main():
         try:
             obj_bytes = planner.get_object_states()
             obj_data  = bytes_to_torch(obj_bytes)
-            print(obj_data)
+
+            # print(obj_data)
             if obj_data.numel() >= 7:
                 n = obj_data.numel() // 7
                 for i in range(min(n, len(world.objects))):
@@ -251,23 +272,27 @@ def main():
         world.sim_context.step(render=True)
         world.scene.update(dt)
 
-        # ------------------------------------------------------------------
-        # 3. Forward keyboard-adjusted goal to the planner
-        # ------------------------------------------------------------------
-        with world._goal_lock:
-            goal_now = world._goal.clone()
-        planner.set_goal(torch_to_bytes(goal_now.cpu()))
+        # # ------------------------------------------------------------------
+        # # 4. Draw rollouts + goal
+        # # ------------------------------------------------------------------
+        # try:
+        #     rollout_bytes = planner.get_rollouts()
+        #     ee_quat = world.get_ee_quat()[0]
+        #     origin  = world.scene.env_origins[0]
+        #     vis.update(rollout_bytes, goal_now, ee_quat, origin, args_cli.n_rollouts_draw)
+        # except Exception:
+        #     pass
 
         # ------------------------------------------------------------------
-        # 4. Draw rollouts + goal
+        # 3. Visualise rollouts + goal (before stepping so viewer is current)
         # ------------------------------------------------------------------
-        try:
+        goal = bytes_to_torch(planner.get_goal())
+        if vis is not None:
             rollout_bytes = planner.get_rollouts()
-            ee_quat = world.get_ee_quat()[0]
-            origin  = world.scene.env_origins[0]
-            vis.update(rollout_bytes, goal_now, ee_quat, origin, args_cli.n_rollouts_draw)
-        except Exception:
-            pass
+            origin = world.scene.env_origins[0]
+            ee_quat = world.get_ee_quat()[0]      # (4,) w,x,y,z world frame
+            vis.update(rollout_bytes, ee_quat, origin, n_rollouts_draw, target=goal)
+
 
         # ------------------------------------------------------------------
         # 5. Logging
@@ -275,6 +300,10 @@ def main():
         ee_pos = world.get_ee_pos()[0]
         tcp_offset_world = _quat_apply(world.get_ee_quat()[0].cpu(), tcp_offset_local)
         tcp_pos = ee_pos.cpu() + tcp_offset_world
+        # import pdb; pdb.set_trace()
+        # objects[idx].data.root_link_pos_w
+        height_match = torch.abs(tcp_pos[2] - world.objects[1].data.root_link_pos_w[0,2])
+        print(height_match)
 
         try:
             cur_step   = int(bytes_to_torch(planner.get_current_step()).item())

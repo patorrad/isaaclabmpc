@@ -23,7 +23,7 @@ _BLOCK_FRICTION = 0.2
 _BLOCK_SPECS = [
     ([0.3127,  0.1797, 0.8], (0.9, 0.2, 0.2)),   # 0: target      red
     ([0.1825,  0.1874, 0.8], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
-    # ([0.1712, -0.1893, 0.8], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
+    ([0.1712, -0.1893, 0.8], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
     # ([0.3095, -0.1735, 0.8], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
 ]
 
@@ -51,7 +51,7 @@ def make_static_cfgs(stand_urdf: str) -> list:
             physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.2,
                                                             dynamic_friction=0.2),
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 0.775)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 1.17)),
     )
 
     return [stand_cfg, table_cfg]

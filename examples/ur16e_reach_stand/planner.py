@@ -152,13 +152,13 @@ class Objective:
     along that link's local Z axis).
     """
 
-    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.12])
+    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.115])
 
     def __init__(self, cfg: PlannerConfig):
         self.weights = {
             "ee_to_goal": 30.0,
             "robot_ori":     7.0,
-            "joint_vel":      1.0,
+            "joint_vel":      2.25,
         }
 
     def reset(self):

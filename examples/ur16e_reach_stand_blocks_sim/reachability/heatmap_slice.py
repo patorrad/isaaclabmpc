@@ -146,7 +146,8 @@ def plot_heatmap(rate_grid: np.ndarray,
 
 # ── Viser viewer ──────────────────────────────────────────────────────────────
 
-def launch_viser(xs: np.ndarray, ys: np.ndarray,
+def launch_viser(ik: InverseKinematics,
+                 xs: np.ndarray, ys: np.ndarray,
                  z_world: float, success_rate: np.ndarray,
                  port: int = 8080) -> None:
     import viser
@@ -284,8 +285,35 @@ def launch_viser(xs: np.ndarray, ys: np.ndarray,
     server.scene.add_box("/scene/table", dimensions=(1.40, 2.50, 0.07),
                          position=(1.1, 0.0, 0.95), color=(200, 200, 200), opacity=0.5)
 
+    # ── GUI ───────────────────────────────────────────────────────────────────
+    # Mutable state so the callback can update it
+    state = {"z": z_world, "rate": success_rate}
+
+    with server.gui.add_folder("Heatmap slice"):
+        z_slider = server.gui.add_slider(
+            "Height z (m)", min=0.60, max=2.00, step=0.05,
+            initial_value=round(z_world / 0.05) * 0.05,
+        )
+        compute_btn = server.gui.add_button("Recompute slice")
+
+    @compute_btn.on_click
+    def _recompute(_):
+        new_z = float(z_slider.value)
+        print(f"Recomputing heatmap at z = {new_z:.2f} m ...")
+        t0 = time.time()
+        new_rate = solve_heatmap(ik, xs, ys, new_z)
+        print(f"  Done in {time.time()-t0:.1f}s  "
+              f"({(new_rate > 0).mean()*100:.1f}% reachable)")
+        state["z"]    = new_z
+        state["rate"] = new_rate
+        new_colors = (cmap(new_rate)[:, :3] * 255).astype(np.uint8)
+        new_pts    = np.stack([xs, ys, np.full(len(xs), new_z)], axis=1)
+        server.scene.add_point_cloud("/heatmap", points=new_pts,
+                                     colors=new_colors, point_size=0.018)
+
     print(f"Viewer ready at http://localhost:{port}")
     print("Drag the gizmo — robot follows via differential IK.")
+    print("Use 'Recompute slice' in the GUI to change height.")
     print("Green = reachable with task orientations.  Press Ctrl+C to exit.\n")
 
     while True:
@@ -372,7 +400,7 @@ def main():
     plot_heatmap(rate_grid, x_vals, y_vals, args.z, args.res, out_path)
 
     if args.viser:
-        launch_viser(xs, ys, args.z, success_rate, port=args.port)
+        launch_viser(ik, xs, ys, args.z, success_rate, port=args.port)
 
 
 if __name__ == "__main__":

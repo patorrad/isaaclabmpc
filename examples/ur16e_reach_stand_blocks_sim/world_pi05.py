@@ -126,8 +126,8 @@ def _look_at_quat(eye, target, world_up=(0., 0., 1.)):
         w=(R[1,0]-R[0,1])/s; x=(R[0,2]+R[2,0])/s; y=(R[1,2]+R[2,1])/s; z=0.25*s
     return (float(w), float(x), float(y), float(z))
 
-_WS_CENTER = (0.25, 0.18, 0.84)
-_BASE_EYE  = (1.00, 0.18, 1.10)
+_WS_CENTER = (0.52, 0.0, 1.26)
+_BASE_EYE  = (0.52, 1.4, 1.5)    # +y side view looking toward workspace
 
 _WRIST_CAM_POS = (0.0, 0.05, 0.01)
 _WRIST_CAM_ROT = (1.0, 0.0, 0.0, 0.0)
@@ -185,7 +185,7 @@ class Pi05Policy:
 # 6. Episode randomisation (mirrors collect_demos.py)
 # ===========================================================================
 
-_TABLE_Z = 1.0
+_TABLE_Z = 1.26
 _MIN_SEP  = 0.10
 _START_REGION = dict(x=(0.40, 0.65), y=(-0.10, 0.1))
 _GOAL_REGION  = dict(x=(0.45, 0.7),  y=(-0.10, 0.1))

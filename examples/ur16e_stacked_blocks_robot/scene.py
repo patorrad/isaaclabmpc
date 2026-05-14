@@ -20,10 +20,20 @@ _BLOCK_FRICTION = 0.2
 
 # (init_pos, diffuse_color) — order matches solution JSON obj_idx
 _BLOCK_SPECS = [
-    ([0.65,  0., 1.26], (0.9, 0.2, 0.2)),   # 0: target      red
-    ([0.55,  0., 1.26], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
-    # ([0.1712, -0.1893, 0.8], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
+    ([0.65,  0.1933,  1.2], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.65, 0.1883,  1.2], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
+    # ([0.1825, 0.1797, 0.9], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
     # ([0.3095, -0.1735, 0.8], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
+    ([0.65,  0.1933,  1.3], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.65, 0.1883,  1.3], (0.3, 0.5, 0.9)),
+    ([0.65,  0.1933,  1.4], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.65, 0.1883,  1.4], (0.3, 0.5, 0.9)),
+    ([0.8,  0.1933,  1.2], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.8, 0.1883,  1.2], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
+    ([0.8,  0.1933,  1.3], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.8, 0.1883,  1.3], (0.3, 0.5, 0.9)),
+    ([0.8,  0.1933,  1.4], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.8, 0.1883,  1.4], (0.3, 0.5, 0.9)),
 ]
 
 
@@ -44,14 +54,13 @@ def make_static_cfgs(stand_urdf: str) -> list:
     table_cfg = AssetBaseCfg(
         prim_path="PLACEHOLDER",
         spawn=sim_utils.CuboidCfg(
-            size=(2.0, 2.50, 0.07),
+            size=(1.40, 2.50, 0.07),
             collision_props=sim_utils.CollisionPropertiesCfg(),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.9, 0.9, 0.9)), # opacity=0.35),
             physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.2,
                                                             dynamic_friction=0.2),
         ),
-        # init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 0.875)),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(1.1, 0.0, 1.2)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 1.2)),
     )
 
     return [stand_cfg, table_cfg]

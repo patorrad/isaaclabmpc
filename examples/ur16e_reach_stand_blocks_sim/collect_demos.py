@@ -38,7 +38,7 @@ if "--enable_cameras" not in sys.argv:
 parser = argparse.ArgumentParser(description="Demo collector — ur16e reach blocks")
 parser.add_argument("--n_episodes",    type=int, default=50,
                     help="Number of successful episodes to collect")
-parser.add_argument("--max_steps_ep",  type=int, default=1000,
+parser.add_argument("--max_steps_ep",  type=int, default=700,
                     help="Max steps per episode before giving up")
 parser.add_argument("--planner_addr",  type=str, default="tcp://localhost:4242")
 parser.add_argument("--out_dir",       type=str,
@@ -72,6 +72,7 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+from isaaclab.assets import AssetBaseCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab.sensors import CameraCfg
 import isaaclab.sim as sim_utils
@@ -145,8 +146,8 @@ def _look_at_quat(eye, target, world_up=(0., 0., 1.)):
     return (float(w), float(x), float(y), float(z))
 
 
-_WS_CENTER = (0.25, 0.18, 0.84)
-_BASE_EYE  = (1.00, 0.18, 1.10)   # fixed side view (formerly "side cam")
+_WS_CENTER = (0.52, 0.0, 1.26)
+_BASE_EYE  = (0.52, 1.4, 1.5)    # +y side view looking toward workspace
 
 # Wrist camera: local offset from wrist_3_link origin.
 # Mounted slightly forward (+Z) and to the side, looking along the tool axis.
@@ -213,21 +214,43 @@ def _save_episode(out_dir: str, ep_idx: int, frames: list, task: str):
 
 from examples.ur16e_reach_stand_blocks_sim.scene import _BLOCK_SPECS
 
-_TABLE_Z = 1.0 #0.935
+_TABLE_Z = 1.26
 _MIN_SEP  = 0.10   # minimum distance between any two block centres [m]
 
 # Region where blocks may start (visible from base camera)
-# _START_REGION = dict(x=(0.10, 0.35), y=(0.12, 0.3))
-_START_REGION = dict(x=(0.40, 0.65), y=(-0.10, 0.1))
+_START_REGION = dict(x=(0.4, 0.6), y=(-0.3, -0.1))
 # Region where goals may land
-# _GOAL_REGION  = dict(x=(0.00, 0.22), y=(0.12, 0.3))
-_GOAL_REGION  = dict(x=(0.45, 0.7), y=(-0.10, 0.1))
+_GOAL_REGION  = dict(x=(0.4, 0.6), y=(-0.3, -0.1))
 
 # Original solution step structure (obj indices / names preserved)
 _BASE_STEPS = [
     {"obj_idx": 1, "obj_name": "blue block"},
     {"obj_idx": 0, "obj_name": "red block"},
 ]
+
+
+def _make_region_viz_cfgs() -> list:
+    """Thin colored slabs on the table surface marking the start/goal regions."""
+    _TABLE_TOP_Z = 1.236  # table center 1.2 + half-height 0.035 + thin slab offset
+
+    def _slab(region, color, z=_TABLE_TOP_Z):
+        cx = (region["x"][0] + region["x"][1]) / 2
+        cy = (region["y"][0] + region["y"][1]) / 2
+        sx = region["x"][1] - region["x"][0]
+        sy = region["y"][1] - region["y"][0]
+        return AssetBaseCfg(
+            prim_path="PLACEHOLDER",
+            spawn=sim_utils.CuboidCfg(
+                size=(sx, sy, 0.002),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=color),
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=(cx, cy, z)),
+        )
+
+    return [
+        _slab(_START_REGION, color=(0.2, 0.85, 0.2)),            # green  — start
+        _slab(_GOAL_REGION,  color=(0.9, 0.5, 0.1), z=_TABLE_TOP_Z + 0.001),  # orange — goal
+    ]
 
 
 def _sample_pos(region: dict, rng: np.random.Generator) -> list:
@@ -322,7 +345,7 @@ def main():
         ee_link_name=cfg.ee_link_name,
         goal=cfg.goal,
         object_cfgs=make_block_cfgs(),
-        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
+        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf) + _make_region_viz_cfgs(),
         camera_cfgs=_make_camera_cfgs(),
     )
     device = world.device
@@ -412,14 +435,19 @@ def main():
             ]
             done = all(d < args_cli.success_dist for d in dists)
 
+            planner_step  = int(bytes_to_torch(planner.get_current_step()).item())
+            planner_total = int(bytes_to_torch(planner.get_total_steps()).item())
+            planner_done  = planner_step >= planner_total
+
             print(
-                f"\r[ep {n_attempts}] step {step:04d}  "
+                f"\r\033[2K[attempt {n_attempts}] step {step:04d}  "
                 f"dists={[round(d,3) for d in dists]}  "
-                f"success {n_success}/{args_cli.n_episodes}",
+                f"planner {planner_step}/{planner_total}  "
+                f"saved {n_success}/{args_cli.n_episodes}",
                 end="", flush=True,
             )
 
-            if done:
+            if done or planner_done:
                 break
 
         if done:
@@ -427,12 +455,12 @@ def main():
             n_success += 1
             elapsed = time.time() - t0
             print(
-                f"\n[collector] Episode {n_success}/{args_cli.n_episodes} → {path}  "
-                f"({len(ep_frames)} frames, {elapsed:.0f}s total)",
+                f"\n[collector] saved {n_success}/{args_cli.n_episodes} ← attempt {n_attempts}  "
+                f"({len(ep_frames)} frames, {elapsed:.0f}s total)  {path}",
                 flush=True,
             )
         else:
-            print(f"\n[collector] Episode {n_attempts} timed out — discarding", flush=True)
+            print(f"\n[collector] attempt {n_attempts} failed — discarding", flush=True)
 
     print(f"\n[collector] Done. {n_success} episodes in {out_dir}")
     print(f"  Next: python examples/ur16e_reach_stand_blocks_sim/convert_to_lerobot.py --in_dir {out_dir}")

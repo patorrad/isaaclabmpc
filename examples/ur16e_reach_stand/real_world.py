@@ -86,7 +86,7 @@ class IsaacLabCfg:
 @dataclass
 class WorldConfig:
     n_steps: int = 100000
-    goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
+    goal: List[float] = field(default_factory=lambda: [0.40, -0.1, 1.3])
     ee_link_name: str = "wrist_3_link"
     stand_urdf: str = ""
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
@@ -238,7 +238,7 @@ def main():
         robot_cfg=robot_cfg,
         num_envs=1,
         ee_link_name="wrist_3_link",
-        goal=[0.40, 0.10, 0.92],
+        goal=cfg.goal,
         # object_cfgs=make_block_cfgs(),
         static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
     )
@@ -246,7 +246,7 @@ def main():
 
     GoalController(world._goal, world._goal_lock)
 
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.12])
+    tcp_offset_local = torch.tensor([0.0, 0.0, 0.115])
     vis = RolloutVisualiser(tcp_offset_local)
 
     # ------------------------------------------------------------------

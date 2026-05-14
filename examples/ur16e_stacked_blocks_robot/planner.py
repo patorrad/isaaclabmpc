@@ -27,7 +27,7 @@ from isaaclab.app import AppLauncher
 parser = argparse.ArgumentParser(description="UR16e MPPI reach planner (Isaac Lab)")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
-args_cli.headless = True          # planner always runs headless
+args_cli.headless = False          # planner always runs headless
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -57,7 +57,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
 from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_blocks_sim.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_stacked_blocks_robot.scene import make_static_cfgs, make_block_cfgs
 
 
 # ===========================================================================
@@ -68,6 +68,8 @@ from examples.ur16e_reach_stand_blocks_sim.scene import make_static_cfgs, make_b
 class IsaacLabCfg:
     dt: float = 1.0 / 60.0
     visualize_rollouts: bool = True
+    render: bool = False
+    env_spacing: float = 1.5
 
 
 @dataclass
@@ -108,6 +110,8 @@ def _load_config(yaml_path: str) -> PlannerConfig:
         cfg.isaaclab = IsaacLabCfg(
             dt=il.get("dt", 1.0 / 60.0),
             visualize_rollouts=il.get("visualize_rollouts", True),
+            render=not args_cli.headless,
+            env_spacing=il.get("env_spacing", 1.5),
         )
 
     return cfg
@@ -168,16 +172,27 @@ class Objective:
 
     def __init__(self, cfg: PlannerConfig):
         self.weights = {
+            # "robot_to_obj": 30.0,
+            # "obj_to_goal":  40.0,
+            # "robot_ori":    10.0,
+            # "push_align":   20.0,
+            # "height_match": 20.0,
+            # "collision":     2.0,
+            # "robot_to_obj": 30.0,
+            # "obj_to_goal":  40.0,
+            # "robot_ori":     15.0,
+            # "height_match": 20.0,
+            # "push_align":   40.0,
+            # "collision":     1.0,
             "robot_to_obj":  5.0,
             "obj_to_goal":   25.0,
-            "robot_ori":      3., #5.0,
+            "robot_ori":      5.0,
             "height_match":  20.0,
             "push_align":    45.0,
-            "collision":      0.0, #5.0,
-            "joint_vel":      0.0,
+            "collision":      1.0,
+            "joint_vel":      1.0, #.25,
         }
         self.step_threshold = cfg.step_threshold
-        # self.step_changed = False
 
         with open(cfg.solution_path) as f:
             solution = json.load(f)
@@ -199,27 +214,14 @@ class Objective:
         for name, (idx, pos) in final_poses.items():
             print(f"  {name} (idx {idx}): {pos}")
 
-    def reset_episode(self, steps: list | None = None):
-        """Restart from step 0. Optionally update goal positions for this episode."""
-        if steps is not None:
-            self.steps = steps
-        self.current_step = 0
-        # self.step_changed = False
-        self._last_obj_pos = None
-        self._first_call = True
-        print(f"\n[Objective] Episode reset — steps: "
-              + ", ".join(f"{s['obj_name']}→{s['end_pos']}" for s in self.steps))
-
     def reset(self):
         """Advance to next step if current block reached its goal."""
-        # self.step_changed = False
         if self._last_obj_pos is not None and self.current_step < len(self.steps):
             step = self.steps[self.current_step]
             goal = torch.tensor(step["end_pos"], dtype=torch.float32)
             dist = torch.linalg.norm(self._last_obj_pos.cpu() - goal).item()
             if dist < self.step_threshold:
                 self.current_step += 1
-                # self.step_changed = True
                 if self.current_step < len(self.steps):
                     ns = self.steps[self.current_step]
                     print(f"\n[Step {self.current_step}/{len(self.steps)}] "
@@ -231,6 +233,18 @@ class Objective:
     def compute_cost(self, sim) -> torch.Tensor:
         device = sim.device
 
+        # if not self._printed_initial_poses:
+        #     print("[Objective] Initial object poses in simulation (env 0):")
+        #     for i in range(len(self.steps)):
+        #         obj_idx = self.steps[i]["obj_idx"]
+        #         pos = sim.get_object_pos(obj_idx)[0].tolist()
+        #         print(f"  {self.steps[i]['obj_name']} (idx {obj_idx}): {[round(v,4) for v in pos]}")
+        #     self._printed_initial_poses = True
+        # [Objective] Initial object poses in simulation (env 0):
+        #             obstacle_2 (idx 3): [0.6095, -0.0735, 0.595]
+        #             obstacle_0 (idx 1): [0.4825, 0.0874, 0.595]
+        #             target (idx 0): [0.6127, 0.0797, 0.595]
+        #             target (idx 0): [0.6127, 0.0797, 0.595]
         # TCP tip position
         ee_pos  = sim.get_ee_pos()   # (num_envs, 3)
         ee_quat = sim.get_ee_quat()  # (num_envs, 4)
@@ -245,8 +259,12 @@ class Objective:
         obj_idx  = step["obj_idx"]
         goal_pos = torch.tensor(step["end_pos"], dtype=torch.float32, device=device)
         sim.set_goal(goal_pos)
-        
+
         obj_pos = sim.get_object_pos(obj_idx)  # (num_envs, 3)
+        # import pdb; pdb.set_trace()
+        # obj_pos = sim.get_object_states
+        # print(f'{obj_idx} {obj_pos[0, :]}')
+        # print(sim.get_object_states())
 
         # Cache real object position (env 0) for step-advance check in reset()
         if self._first_call:
@@ -265,6 +283,7 @@ class Objective:
 
         # Height match: TCP Z ≈ block Z
         height_match = torch.abs(tcp_pos[:, 2] - obj_pos[:, 2])
+        print(torch.mean(height_match))
 
         # Push alignment: 0 when TCP is directly behind block, 2 when in front.
         # Gated by distance: fades to zero when TCP is already at the block so
@@ -340,7 +359,7 @@ def main():
 
     server = zerorpc.Server(planner)
     server.bind("tcp://0.0.0.0:4242")
-    print("[planner] Blocks MPPI server listening on tcp://0.0.0.0:4242")
+    print("[planner] Stacked-blocks MPPI server listening on tcp://0.0.0.0:4242")
     server.run()
 
 

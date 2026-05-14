@@ -88,6 +88,7 @@ class MPPIIsaacLabPlanner:
                 dt=cfg.isaaclab.dt,
                 device=cfg.mppi.device,
                 visualize_rollouts=cfg.isaaclab.visualize_rollouts,
+                render=getattr(cfg.isaaclab, 'render', False),
             ),
             robot_cfg=robot_cfg,
             num_envs=cfg.mppi.num_samples,
@@ -195,6 +196,8 @@ class MPPIIsaacLabPlanner:
         """
         self._latest_dof_state = dof_state_bytes
         self.objective.reset()
+        # if getattr(self.objective, "step_changed", False): # TODO remove warm start clearing
+        #     self.mppi.U = torch.zeros_like(self.mppi.U)
 
         dof_state = bytes_to_torch(dof_state_bytes)
         DOF = self.sim.num_dof

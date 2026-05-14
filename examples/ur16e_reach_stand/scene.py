@@ -46,7 +46,7 @@ def make_static_cfgs(stand_urdf: str) -> list:
             physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.2,
                                                             dynamic_friction=0.2),
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 0.65)),
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 1.17)),
     )
 
     return [stand_cfg, table_cfg]
