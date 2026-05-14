@@ -344,6 +344,23 @@ class IsaacLabWrapper:
             except Exception:
                 return torch.zeros(self.num_envs, self.num_dof, device=self.device)
 
+    def get_ee_jacobian(self) -> torch.Tensor:
+        """Geometric Jacobian at the end-effector, shape (num_envs, 6, num_dof).
+
+        Maps joint velocities to end-effector spatial velocity (linear + angular).
+        For a fixed-base robot PhysX excludes the root body from the Jacobian
+        row index, so the EE row is self._ee_idx - 1.
+
+        Returns zeros on failure.
+        """
+        try:
+            J = self.robot.root_physx_view.get_jacobians()
+            # shape: (num_envs, num_bodies - 1, 6, num_dof)
+            return J[:, self._ee_idx - 1, :, :].to(self.device)
+        except Exception as e:
+            print(f"[IsaacLabWrapper] WARNING: get_ee_jacobian failed ({e}); returning zeros.")
+            return torch.zeros(self.num_envs, 6, self.num_dof, device=self.device)
+
     def get_contact_forces(self, sensor_idx: int = 0) -> torch.Tensor:
         """Net contact forces for a sensor in world frame, shape (num_envs, num_bodies, 3).
 
