@@ -68,6 +68,11 @@ from isaaclab.sensors import ContactSensorCfg
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.mppi_isaaclab import MPPIIsaacLabPlanner
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
+from isaaclab_mpc.cost import (
+    DistCost, OrientationCost, HeightMatchCost, PushAlignCost,
+    ContactForceCost, JointVelCost, SingularityCost,
+)
+from isaaclab_mpc.cost.utils import quat_apply
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
 from robots import STAND_URDF_PATH as _STAND_URDF_PATH
 from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
@@ -85,6 +90,24 @@ class IsaacLabCfg:
 
 
 @dataclass
+class CostWeights:
+    robot_to_obj: float = 5.0
+    obj_to_goal:  float = 25.0
+    robot_ori:    float = 15.0
+    height_match: float = 20.0
+    push_align:   float = 45.0
+    collision:    float = 1.0
+    joint_vel:    float = 0.0
+    singularity:  float = 0.05
+
+
+@dataclass
+class CostConfig:
+    weights: CostWeights = field(default_factory=CostWeights)
+    push_align_gate_width: float = 0.03
+
+
+@dataclass
 class PlannerConfig:
     n_steps: int = 10000
     nx: int = 12
@@ -98,6 +121,7 @@ class PlannerConfig:
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
+    costs: CostConfig = field(default_factory=CostConfig)
 
 
 def _load_config(yaml_path: str) -> PlannerConfig:
@@ -134,41 +158,19 @@ def _load_config(yaml_path: str) -> PlannerConfig:
             debug=il.get("debug", False),
         )
 
+    if "costs" in raw:
+        c = raw["costs"]
+        if "weights" in c:
+            cfg.costs.weights = CostWeights(**{k: float(v) for k, v in c["weights"].items()})
+        if "push_align_gate_width" in c:
+            cfg.costs.push_align_gate_width = float(c["push_align_gate_width"])
+
     return cfg
 
 
 # ===========================================================================
 # 4. Objective (cost function)
 # ===========================================================================
-
-def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
-    """Rotate vector(s) v by quaternion(s) q  (w, x, y, z convention).
-
-    Supports batched (num_envs, 4) × (num_envs, 3) → (num_envs, 3).
-    """
-    w, x, y, z = q.unbind(-1)
-    vx, vy, vz = v.unbind(-1)
-    tx = 2.0 * (y * vz - z * vy)
-    ty = 2.0 * (z * vx - x * vz)
-    tz = 2.0 * (x * vy - y * vx)
-    return torch.stack([
-        vx + w * tx + (y * tz - z * ty),
-        vy + w * ty + (z * tx - x * tz),
-        vz + w * tz + (x * ty - y * tx),
-    ], dim=-1)
-
-
-def _quat_to_yaw_pitch(q: torch.Tensor) -> torch.Tensor:
-    """Extract ZYX yaw and pitch from (num_envs, 4) wxyz quaternion.
-
-    Returns (num_envs, 2) tensor [yaw, pitch].
-    Used to penalise wrist tilt — keeping the tool pointing downward.
-    """
-    w, x, y, z = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
-    yaw   = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
-    pitch = torch.asin(torch.clamp(2.0 * (w * y - z * x), -1.0, 1.0))
-    return torch.stack([yaw, pitch], dim=1)
-
 
 class Objective:
     """Multi-step sequential block-push objective.
@@ -189,34 +191,16 @@ class Objective:
     """
 
     def __init__(self, cfg: PlannerConfig, debug: bool = False):
+        w = cfg.costs.weights
         self.weights = {
-            # "robot_to_obj": 30.0,
-            # "obj_to_goal":  40.0,
-            # "robot_ori":    10.0,
-            # "push_align":   20.0,
-            # "height_match": 20.0,
-            # "collision":     2.0,
-            # "robot_to_obj": 30.0,
-            # "obj_to_goal":  40.0,
-            # "robot_ori":     15.0,
-            # "height_match": 20.0,
-            # "push_align":   40.0,
-            # "collision":     1.0,
-            # "robot_to_obj":  5.0,
-            # "obj_to_goal":   25.0,
-            # "robot_ori":      5.0,
-            # "height_match":  20.0,
-            # "push_align":    45.0,
-            # "collision":      1.0,
-            # "joint_vel":      2.25, #.25,
-            "robot_to_obj":  5.0,
-            "obj_to_goal":   25.0,
-            "robot_ori":      15.0,
-            "height_match":  20.0,
-            "push_align":    45.0,
-            "collision":      1.0,
-            "joint_vel":      0.,
-            "singularity":    0.05,  # reciprocal manipulability; tune up to penalise near-singular configs
+            "robot_to_obj": w.robot_to_obj,
+            "obj_to_goal":  w.obj_to_goal,
+            "robot_ori":    w.robot_ori,
+            "height_match": w.height_match,
+            "push_align":   w.push_align,
+            "collision":    w.collision,
+            "joint_vel":    w.joint_vel,
+            "singularity":  w.singularity,
         }
         self.step_threshold = cfg.step_threshold
         self.tcp_offset_local = torch.tensor([0.0, 0.0, get_tool_length()])
@@ -234,6 +218,18 @@ class Objective:
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True
         self._printed_initial_poses = False
+
+        self._costs = {
+            "robot_to_obj": DistCost(),
+            "obj_to_goal":  DistCost(),
+            "robot_ori":    OrientationCost(),
+            "height_match": HeightMatchCost(),
+            "push_align":   PushAlignCost(align_gate_dist=self.align_gate_dist,
+                                          gate_width=cfg.costs.push_align_gate_width),
+            "collision":    ContactForceCost(),
+            "joint_vel":    JointVelCost(),
+            "singularity":  SingularityCost(),
+        }
 
         print(f"[Objective] Loaded {len(self.steps)} steps from {cfg.solution_path}")
         for i, step in enumerate(self.steps):
@@ -318,7 +314,7 @@ class Objective:
         ee_pos  = sim.get_ee_pos()   # (num_envs, 3)
         ee_quat = sim.get_ee_quat()  # (num_envs, 4)
         tcp_offset = self.tcp_offset_local.to(device).expand(sim.num_envs, 3)
-        tcp_pos = ee_pos + _quat_apply(ee_quat, tcp_offset)  # (num_envs, 3)
+        tcp_pos = ee_pos + quat_apply(ee_quat, tcp_offset)  # (num_envs, 3)
 
         # All steps done — zero cost
         if self.current_step >= len(self.steps):
@@ -340,70 +336,32 @@ class Objective:
             self._last_obj_pos = obj_pos[0].detach().clone()
             self._first_call = False
 
-        robot_to_obj = tcp_pos - obj_pos                          # (num_envs, 3)
-        obj_to_goal  = goal_pos.unsqueeze(0) - obj_pos            # (num_envs, 3)
+        robot_to_obj      = tcp_pos - obj_pos                 # (num_envs, 3)
+        obj_to_goal       = goal_pos.unsqueeze(0) - obj_pos   # (num_envs, 3)
+        robot_to_obj_dist = self._costs["robot_to_obj"](robot_to_obj)
 
-        robot_to_obj_dist = torch.linalg.norm(robot_to_obj, dim=1)
-        obj_to_goal_dist  = torch.linalg.norm(obj_to_goal,  dim=1)
+        raw = {
+            "robot_to_obj": robot_to_obj_dist,
+            "obj_to_goal":  self._costs["obj_to_goal"](obj_to_goal),
+            "robot_ori":    self._costs["robot_ori"](ee_quat),
+            "height_match": self._costs["height_match"](tcp_pos[:, 2], obj_pos[:, 2]),
+            "push_align":   self._costs["push_align"](robot_to_obj, obj_to_goal, robot_to_obj_dist),
+            "collision":    self._costs["collision"](sim.get_contact_forces(0)),
+            "joint_vel":    self._costs["joint_vel"](sim.get_joint_vel()),
+            "singularity":  self._costs["singularity"](sim.get_ee_jacobian()),
+        }
 
-        # Orientation: penalise wrist yaw + pitch (keep tool pointing down)
-        yaw_pitch = _quat_to_yaw_pitch(ee_quat)                  # (num_envs, 2)
-        robot_ori = torch.linalg.norm(yaw_pitch, dim=1)
-
-        # Height match: TCP Z ≈ block Z
-        height_match = torch.abs(tcp_pos[:, 2] - obj_pos[:, 2])
-
-        # Push alignment: cosine similarity between (TCP→block) and (block→goal),
-        # shifted by +1 so the range is [0, 2]: 0 = TCP directly behind block
-        # (ideal approach), 2 = TCP directly in front (worst case).
-        r2b_2d = robot_to_obj[:, :2]
-        b2g_2d = obj_to_goal[:, :2]
-        push_align = (
-            torch.sum(r2b_2d * b2g_2d, dim=1)
-            / (torch.linalg.norm(r2b_2d, dim=1).clamp(min=1e-6)
-               * torch.linalg.norm(b2g_2d, dim=1).clamp(min=1e-6))
-            + 1.0
-        )
-        # Gate fades the alignment cost to zero once the TCP reaches the back face
-        # of the object (obj_size/2 + 1 cm standoff), so the robot stops trying to
-        # reposition and commits to pushing. Sigmoid width 0.03 m ≈ 3 cm transition.
-        align_gate = torch.sigmoid((robot_to_obj_dist - self.align_gate_dist) / 0.03)
-        push_align = push_align * align_gate
-
-        forces    = sim.get_contact_forces(0)           # (num_envs, 1, 3)
-        collision = torch.abs(forces[:, 0, 2])          # Z component
-
-        joint_vel = torch.linalg.norm(sim.get_joint_vel(), dim=1)  # (num_envs,)
-
-        J = sim.get_ee_jacobian()                          # (num_envs, 6, 6)
-        det_J = torch.abs(torch.linalg.det(J))             # (num_envs,)
-        singularity = 1.0 / (det_J + 1e-6)                # (num_envs,); large near singularity
-
-        for t in (robot_to_obj_dist, obj_to_goal_dist, robot_ori,
-                  height_match, push_align, collision, joint_vel,
-                  singularity):
+        for t in raw.values():
             t[torch.isnan(t)] = 100.0
 
         if self._debug_capture:
-            raw_terms = [robot_to_obj_dist, obj_to_goal_dist, robot_ori,
-                         height_match, push_align, collision, joint_vel,
-                         singularity]
             self._debug_last_terms = [
-                (self.weights[k] * t[0]).item()
-                for k, t in zip(self._debug_term_keys, raw_terms)
+                (self.weights[k] * raw[k][0]).item()
+                for k in self._debug_term_keys
             ]
             self._debug_capture = False
 
-        cost = (
-            self.weights["robot_to_obj"]  * robot_to_obj_dist
-            + self.weights["obj_to_goal"]   * obj_to_goal_dist
-            + self.weights["robot_ori"]     * robot_ori
-            + self.weights["push_align"]    * push_align
-            + self.weights["height_match"]  * height_match
-            + self.weights["collision"]     * collision
-            + self.weights["joint_vel"]     * joint_vel
-            + self.weights["singularity"]   * singularity
-        )
+        cost = sum(self.weights[k] * v for k, v in raw.items())
         self._cost_history.append(float(cost.min().item()))
         return cost
 
