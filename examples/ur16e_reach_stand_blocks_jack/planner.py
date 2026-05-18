@@ -78,7 +78,7 @@ from isaaclab_mpc.cost import (
 from isaaclab_mpc.cost.utils import quat_apply
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
 from robots import STAND_URDF_PATH as _STAND_URDF_PATH
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
+from examples.ur16e_reach_stand_blocks_jack.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
 
 
 # ===========================================================================

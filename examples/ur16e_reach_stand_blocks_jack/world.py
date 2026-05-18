@@ -74,7 +74,7 @@ from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfi
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
 from robots import STAND_URDF_PATH as _STAND_URDF_PATH
-from examples.ur16e_reach_stand_blocks.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
+from examples.ur16e_reach_stand_blocks_jack.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
 
 
 # ===========================================================================
