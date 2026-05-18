@@ -371,8 +371,8 @@
       <!-- center of the cylinder 8 cm in front of tool0 along +Z -->
       <origin xyz="0 0 0.055" rpy="0 0 0"/>
       <geometry>
-        <!-- radius = 1.5 cm, total length = 16 cm -->
-        <cylinder radius="0.01" length="0.115"/>
+        <!-- radius = 1. cm, total length = 11.5 cm -->
+        <cylinder radius="0.0025" length="0.12"/>
       </geometry>
       <material name="gripper_black">
         <color rgba="0.1 0.1 0.1 1.0"/>
@@ -383,7 +383,7 @@
     <collision>
       <origin xyz="0 0 0.055" rpy="0 0 0"/>
       <geometry>
-        <cylinder radius="0.01" length="0.115"/>
+        <cylinder radius="0.0025" length="0.12"/>
       </geometry>
     </collision>
 

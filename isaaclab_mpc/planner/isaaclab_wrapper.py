@@ -394,6 +394,19 @@ class IsaacLabWrapper:
             return torch.zeros(self.num_envs, 1, 3, device=self.device)
         return self.contact_sensors[sensor_idx].data.net_forces_w
 
+    def get_contact_pair_forces(self, sensor_idx: int = 0) -> torch.Tensor:
+        """Per-pair contact forces, shape (num_envs, num_bodies, num_filter_bodies, 3).
+
+        Requires filter_prim_paths_expr set on the ContactSensorCfg.
+        Returns zeros if the sensor is not configured or the filter matrix is unavailable.
+        """
+        if sensor_idx >= len(self.contact_sensors):
+            return torch.zeros(self.num_envs, 1, 1, 3, device=self.device)
+        fm = self.contact_sensors[sensor_idx].data.force_matrix_w
+        if fm is None:
+            return torch.zeros(self.num_envs, 1, 1, 3, device=self.device)
+        return fm
+
     def get_object_quat(self, idx: int = 0) -> torch.Tensor:
         """Object orientation (w, x, y, z) in local env frame, shape (num_envs, 4).
 

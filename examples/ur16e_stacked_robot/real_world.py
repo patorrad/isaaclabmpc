@@ -72,7 +72,7 @@ if _PROJECT_ROOT not in sys.path:
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from assets.robots.ur16e import make_ur16e_cfg
+from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
 from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs
 
 # ===========================================================================
@@ -216,7 +216,7 @@ def main():
     )
     device = world.device
 
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.115])
+    tcp_offset_local = torch.tensor([0,0, get_tool_length()])
     vis = RolloutVisualiser(tcp_offset_local)
 
     # ------------------------------------------------------------------

@@ -60,9 +60,10 @@ from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
 from isaaclab_mpc.cost import (
     DistCost, OrientationCost, HeightMatchCost, PushAlignCost,
     ContactForceCost, JointVelCost, SingularityCost, GaussianProjection,
+    TcpFloorCost,
 )
 from isaaclab_mpc.cost.utils import quat_apply
-from assets.robots.ur16e import make_ur16e_cfg
+from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
 from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs
 
 
@@ -80,6 +81,7 @@ class CostWeights:
     collision:    float = 2.0
     joint_vel:    float = 3.0
     singularity:  float = 0.05
+    tcp_floor:    float = 30.0
 
 
 @dataclass
@@ -107,12 +109,14 @@ class GaussianProjectionConfig:
     push_align:   GaussianProjParams = field(default_factory=GaussianProjParams)
     collision:    GaussianProjParams = field(default_factory=GaussianProjParams)
     singularity:  GaussianProjParams = field(default_factory=GaussianProjParams)
+    tcp_floor:    GaussianProjParams = field(default_factory=GaussianProjParams)
 
 
 @dataclass
 class CostConfig:
     weights: CostWeights = field(default_factory=CostWeights)
     push_align_gate_width: float = 0.03
+    tcp_floor_offset: float = 0.05
     gaussian_projection: GaussianProjectionConfig = field(default_factory=GaussianProjectionConfig)
 
 
@@ -173,12 +177,14 @@ def _load_config(yaml_path: str) -> PlannerConfig:
             cfg.costs.weights = CostWeights(**{k: float(v) for k, v in c["weights"].items()})
         if "push_align_gate_width" in c:
             cfg.costs.push_align_gate_width = float(c["push_align_gate_width"])
+        if "tcp_floor_offset" in c:
+            cfg.costs.tcp_floor_offset = float(c["tcp_floor_offset"])
         if "gaussian_projection" in c:
             gp_raw = c["gaussian_projection"]
             gp = GaussianProjectionConfig()
             gp.enabled = bool(gp_raw.get("enabled", False))
             _cost_keys = ["robot_to_obj", "obj_to_goal", "robot_ori", "height_match",
-                          "push_align", "joint_vel", "collision", "singularity"]
+                          "push_align", "joint_vel", "collision", "singularity", "tcp_floor"]
             for key in _cost_keys:
                 if key in gp_raw:
                     p = gp_raw[key]
@@ -215,12 +221,10 @@ class Objective:
       push_align    — TCP is behind the block relative to the push direction
     """
 
-    TCP_OFFSET_LOCAL = torch.tensor([0.0, 0.0, 0.115])
-
     _PLOT_INTERVAL = 50
     _EMA_ALPHA     = 0.05
 
-    def __init__(self, cfg: PlannerConfig):
+    def __init__(self, cfg: PlannerConfig, table_surface_z: float = 0.0):
         w = cfg.costs.weights
         self.weights = {
             "robot_to_obj": w.robot_to_obj,
@@ -231,18 +235,29 @@ class Objective:
             "collision":    w.collision,
             "joint_vel":    w.joint_vel,
             "singularity":  w.singularity,
+            "tcp_floor":    w.tcp_floor,
         }
         self._costs = {
             "robot_to_obj": DistCost(),
             "obj_to_goal":  DistCost(),
             "robot_ori":    OrientationCost(),
             "height_match": HeightMatchCost(),
-            "push_align":   PushAlignCost(align_gate_dist=0.08,
+            "push_align":   PushAlignCost(align_gate_dist=0.05,
                                           gate_width=cfg.costs.push_align_gate_width),
             "collision":    ContactForceCost(),
             "joint_vel":    JointVelCost(),
             "singularity":  SingularityCost(),
+            "tcp_floor":    TcpFloorCost(threshold=table_surface_z + cfg.costs.tcp_floor_offset,
+                                         table_surface_z=table_surface_z),
         }
+        print(f"[Objective] TcpFloorCost: table_surface_z={table_surface_z:.4f}, "
+              f"offset={cfg.costs.tcp_floor_offset:.4f}, "
+              f"threshold={table_surface_z + cfg.costs.tcp_floor_offset:.4f}")
+
+        self._active_costs = {k for k, w in self.weights.items() if w != 0.0}
+        _skipped = sorted(set(self.weights) - self._active_costs)
+        if _skipped:
+            print(f"[Objective] Skipping zero-weight costs: {_skipped}")
 
         gp_cfg = cfg.costs.gaussian_projection
         if gp_cfg.enabled:
@@ -251,9 +266,9 @@ class Objective:
                                       c=getattr(gp_cfg, k).c,
                                       s=getattr(gp_cfg, k).s,
                                       r=getattr(gp_cfg, k).r)
-                for k in self._costs
+                for k in self._active_costs
             }
-            _active = [k for k in self._costs if getattr(gp_cfg, k).c != 0]
+            _active = [k for k in self._active_costs if getattr(gp_cfg, k).c != 0]
             print(f"[Objective] GaussianProjection enabled for: {_active}")
         else:
             self._projections = {}
@@ -275,13 +290,13 @@ class Objective:
 
         plt.ion()
         colors = ["steelblue", "tomato", "forestgreen", "goldenrod",
-                  "mediumpurple", "darkorange", "teal", "sienna"]
+                  "mediumpurple", "darkorange", "teal", "sienna", "crimson"]
         self._fig, self._ax = plt.subplots(figsize=(8, 4))
         self._fig.suptitle("Avg weighted cost per component (across trajectories)")
         self._bars = self._ax.bar(self._labels, [0.0] * len(self._labels),
                                   color=colors[:len(self._labels)])
         self._ax.set_ylabel("Avg weighted cost")
-        self._ax.set_ylim(0, 10)
+        self._ax.set_ylim(0, 5)
         plt.tight_layout()
         plt.show()
 
@@ -321,22 +336,10 @@ class Objective:
     def compute_cost(self, sim) -> torch.Tensor:
         device = sim.device
 
-        # if not self._printed_initial_poses:
-        #     print("[Objective] Initial object poses in simulation (env 0):")
-        #     for i in range(len(self.steps)):
-        #         obj_idx = self.steps[i]["obj_idx"]
-        #         pos = sim.get_object_pos(obj_idx)[0].tolist()
-        #         print(f"  {self.steps[i]['obj_name']} (idx {obj_idx}): {[round(v,4) for v in pos]}")
-        #     self._printed_initial_poses = True
-        # [Objective] Initial object poses in simulation (env 0):
-        #             obstacle_2 (idx 3): [0.6095, -0.0735, 0.595]
-        #             obstacle_0 (idx 1): [0.4825, 0.0874, 0.595]
-        #             target (idx 0): [0.6127, 0.0797, 0.595]
-        #             target (idx 0): [0.6127, 0.0797, 0.595]
         # TCP tip position
         ee_pos  = sim.get_ee_pos()   # (num_envs, 3)
         ee_quat = sim.get_ee_quat()  # (num_envs, 4)
-        tcp_offset = self.TCP_OFFSET_LOCAL.to(device).expand(sim.num_envs, 3)
+        tcp_offset = torch.tensor([0,0, get_tool_length()])
         tcp_pos = ee_pos + quat_apply(ee_quat, tcp_offset)  # (num_envs, 3)
 
         # All steps done — penalise joint velocity so MPPI drives the robot to a stop
@@ -350,36 +353,47 @@ class Objective:
         sim.set_goal(goal_pos)
 
         obj_pos = sim.get_object_pos(obj_idx)  # (num_envs, 3)
-        # import pdb; pdb.set_trace()
-        # obj_pos = sim.get_object_states
-        # print(f'{obj_idx} {obj_pos[0, :]}')
-        # print(sim.get_object_states())
 
         # Cache real object position (env 0) for step-advance check in reset()
         if self._first_call:
             self._last_obj_pos = obj_pos[0].detach().clone()
             self._first_call = False
 
-        robot_to_obj      = tcp_pos - obj_pos                 # (num_envs, 3)
-        obj_to_goal       = goal_pos.unsqueeze(0) - obj_pos   # (num_envs, 3)
-        robot_to_obj_dist = self._costs["robot_to_obj"](robot_to_obj)
+        robot_to_obj = tcp_pos - obj_pos                 # (num_envs, 3)
+        obj_to_goal  = goal_pos.unsqueeze(0) - obj_pos  # (num_envs, 3)
 
-        raw = {
-            "robot_to_obj": robot_to_obj_dist,
-            "obj_to_goal":  self._costs["obj_to_goal"](obj_to_goal),
-            "robot_ori":    self._costs["robot_ori"](ee_quat),
-            "height_match": self._costs["height_match"](tcp_pos[:, 2], obj_pos[:, 2]),
-            "push_align":   self._costs["push_align"](robot_to_obj, obj_to_goal, robot_to_obj_dist),
-            "collision":    self._costs["collision"](sim.get_contact_forces(0)),
-            "joint_vel":    self._costs["joint_vel"](sim.get_joint_vel()),
-            "singularity":  self._costs["singularity"](sim.get_ee_jacobian()),
-        }
+        # robot_to_obj_dist is shared by robot_to_obj and push_align
+        _need_dist = ("robot_to_obj" in self._active_costs or "push_align" in self._active_costs)
+        robot_to_obj_dist = self._costs["robot_to_obj"](robot_to_obj) if _need_dist else None
+
+        raw = {}
+        if "robot_to_obj" in self._active_costs:
+            raw["robot_to_obj"] = robot_to_obj_dist
+        if "obj_to_goal" in self._active_costs:
+            raw["obj_to_goal"] = self._costs["obj_to_goal"](obj_to_goal)
+        if "robot_ori" in self._active_costs:
+            raw["robot_ori"] = self._costs["robot_ori"](ee_quat)
+        if "height_match" in self._active_costs:
+            raw["height_match"] = self._costs["height_match"](tcp_pos[:, 2], obj_pos[:, 2])
+        if "push_align" in self._active_costs:
+            raw["push_align"] = self._costs["push_align"](robot_to_obj, obj_to_goal, robot_to_obj_dist)
+        if "collision" in self._active_costs:
+            raw["collision"] = self._costs["collision"](
+                sim.get_contact_forces(0)                        # (num_envs, 1, 3) net
+            )
+        if "joint_vel" in self._active_costs:
+            raw["joint_vel"] = self._costs["joint_vel"](sim.get_joint_vel())
+        if "singularity" in self._active_costs:
+            raw["singularity"] = self._costs["singularity"](sim.get_ee_jacobian())
+        if "tcp_floor" in self._active_costs:
+            raw["tcp_floor"] = self._costs["tcp_floor"](tcp_pos[:, 2])
 
         for t in raw.values():
             t[torch.isnan(t)] = 100.0
 
         for k, proj in self._projections.items():
-            raw[k] = proj(raw[k])
+            if k in raw:
+                raw[k] = proj(raw[k])
 
         weighted = {k: self.weights[k] * v for k, v in raw.items()}
 
@@ -402,11 +416,18 @@ def main():
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
 
+    block_cfgs = make_block_cfgs()
+    static_cfgs = make_static_cfgs(stand_urdf=cfg.stand_urdf)
+    # static_cfgs[1] is the table: center Z + half-thickness = surface Z
+    _table_cfg = static_cfgs[0]
+    table_surface_z = _table_cfg.init_state.pos[2] + _table_cfg.spawn.size[2] / 2
+
     robot_contact_sensor = ContactSensorCfg(
         prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
         update_period=0.0,
         history_length=0,
         debug_vis=False,
+        # filter_prim_paths_expr=[f"{{ENV_REGEX_NS}}/Object{i}" for i in range(len(block_cfgs))],
     )
 
     _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
@@ -421,14 +442,14 @@ def main():
         )
     )
 
-    objective = Objective(cfg)
+    objective = Objective(cfg, table_surface_z=table_surface_z)
     planner = MPPIIsaacLabPlanner(
         cfg,
         objective,
         robot_cfg=robot_cfg,
         prior=None,
-        object_cfgs=make_block_cfgs(),
-        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
+        object_cfgs=block_cfgs,
+        static_cfgs=static_cfgs,
         contact_sensor_cfgs=[robot_contact_sensor],
     )
 
