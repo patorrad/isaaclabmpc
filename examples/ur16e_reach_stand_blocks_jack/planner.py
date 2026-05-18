@@ -32,9 +32,12 @@ parser.add_argument("--solution_path", type=str, default=None,
                     help="Path to puzzle solution JSON. Overrides cfg.solution_path.")
 parser.add_argument("--telemetry_path", type=str, default=None,
                     help="If set, write MPPI cost history and step events as JSON on exit.")
+parser.add_argument("--viewer", action="store_true", default=False,
+                    help="Open the IsaacLab viewer for the planner instance.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
-args_cli.headless = True          # planner always runs headless
+if not args_cli.viewer:
+    args_cli.headless = True
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -87,6 +90,7 @@ class IsaacLabCfg:
     dt: float = 1.0 / 60.0
     visualize_rollouts: bool = True
     debug: bool = False
+    render: bool = False
 
 
 @dataclass
@@ -184,6 +188,7 @@ def _load_config(yaml_path: str) -> PlannerConfig:
             dt=il.get("dt", 1.0 / 60.0),
             visualize_rollouts=il.get("visualize_rollouts", True),
             debug=il.get("debug", False),
+            render=il.get("render", False),
         )
 
     if "costs" in raw:
@@ -446,6 +451,9 @@ def main():
 
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
+
+    if args_cli.viewer:
+        cfg.isaaclab.render = True
 
     # Apply CLI overrides
     if args_cli.solution_path:
