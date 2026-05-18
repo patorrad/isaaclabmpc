@@ -430,7 +430,8 @@ def main():
         # ------------------------------------------------------------------
         q = world.get_joint_pos()[0].clone()
         dq = world.get_joint_vel()[0].clone()
-        ee_pos = world.get_ee_pos()[0]            # (3,) local frame
+        ee_pos  = world.get_ee_pos()[0]            # (3,) wrist in local frame
+        ee_quat = world.get_ee_quat()[0]           # (4,) w,x,y,z — needed for TCP tip
 
         # ------------------------------------------------------------------
         # 6. Logging + telemetry
@@ -451,16 +452,17 @@ def main():
             })
             prev_step_info = step_info
 
-        # Sample EE position and block positions every 50 sim steps
+        # Sample TCP tip position and block positions every 50 sim steps
         if step % 50 == 0:
-            ee_trajectory.append(ee_pos.tolist())
+            tool_tip = ee_pos + _quat_apply(ee_quat, tcp_offset_local.to(ee_quat.device))
+            ee_trajectory.append(tool_tip.tolist())
             block_positions_history.append([
                 world.get_object_pos(i)[0].tolist() for i in range(len(world.objects))
             ])
 
-        # Check for completion every 100 steps
-        if step % 100 == 0 and total_steps > 0 and step_info >= total_steps:
+        if total_steps > 0 and step_info >= total_steps:
             all_steps_done = True
+            print(f"\n[world] All {total_steps} steps completed — exiting.", flush=True)
             break
 
         elapsed = time.time() - t_prev
@@ -495,6 +497,10 @@ def main():
         with open(args_cli.output_path, 'w') as f:
             json.dump(result, f, indent=2)
         print(f"[world] Result written to {args_cli.output_path}")
+
+    if all_steps_done:
+        import os as _os
+        _os._exit(0)   # simulation_app.close() hangs in headless subprocesses
 
 
 if __name__ == "__main__":
