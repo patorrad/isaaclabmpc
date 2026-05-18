@@ -136,3 +136,10 @@ isaaclab:
   # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m
   env_spacing: 3.0
 stand_urdf: "/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/stand/stand.urdf"
+
+randomization:
+  table_z: 1.2
+  min_sep: 0.10
+  start_region: {x: [0.40, 0.750], y: [-0.25, 0.25]}
+  goal_region:  {x: [0.40, 0.75], y: [-0.25, 0.25]}
+
