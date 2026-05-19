@@ -88,7 +88,7 @@ class MPPIIsaacLabPlanner:
                 dt=cfg.isaaclab.dt,
                 device=cfg.mppi.device,
                 visualize_rollouts=cfg.isaaclab.visualize_rollouts,
-                render=getattr(cfg.isaaclab, 'render', False),
+                render=cfg.isaaclab.render,
             ),
             robot_cfg=robot_cfg,
             num_envs=cfg.mppi.num_samples,
