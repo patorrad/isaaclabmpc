@@ -32,12 +32,8 @@ parser.add_argument("--solution_path", type=str, default=None,
                     help="Path to puzzle solution JSON. Overrides cfg.solution_path.")
 parser.add_argument("--telemetry_path", type=str, default=None,
                     help="If set, write MPPI cost history and step events as JSON on exit.")
-parser.add_argument("--viewer", action="store_true", default=False,
-                    help="Open the IsaacLab viewer for the planner instance.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
-if not args_cli.viewer:
-    args_cli.headless = True
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -305,6 +301,8 @@ class Objective:
         for name, (idx, pos) in final_poses.items():
             print(f"  {name} (idx {idx}): {pos}")
 
+        self._highlight_current_target()
+
         self.debug = debug
         self._debug_term_keys = ["robot_to_obj", "obj_to_goal", "robot_ori",
                                   "height_match", "push_align", "collision", "joint_vel",
@@ -313,6 +311,17 @@ class Objective:
         self._debug_capture = False
         if debug:
             self._init_debug_plot()
+
+    def _highlight_current_target(self):
+        if self.current_step >= len(self.steps):
+            return
+        obj_idx = self.steps[self.current_step]["obj_idx"]
+        prim_path = f"/World/envs/env_0/Object{obj_idx}"
+        try:
+            import omni.usd
+            omni.usd.get_context().get_selection().set_selected_prim_paths([prim_path], False)
+        except Exception:
+            pass
 
     def _init_debug_plot(self):
         plt.ion()
@@ -342,6 +351,7 @@ class Objective:
                           f"now pushing {ns['obj_name']} → {ns['end_pos']}")
                 else:
                     print(f"\n[Step] All {len(self.steps)} steps completed!")
+                self._highlight_current_target()
         self._first_call = True
         self._debug_capture = self.debug
 
@@ -452,8 +462,8 @@ def main():
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
 
-    if args_cli.viewer:
-        cfg.isaaclab.render = True
+    headless = getattr(args_cli, "headless", False)
+    cfg.isaaclab.render = not headless
 
     # Apply CLI overrides
     if args_cli.solution_path:

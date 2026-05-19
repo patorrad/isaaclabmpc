@@ -69,6 +69,7 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
+import isaaclab.sim as sim_utils
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
@@ -87,6 +88,13 @@ class IsaacLabCfg:
 
 
 @dataclass
+class TaskDoneConfig:
+    enabled: bool = False
+    exit_bin_y: float = -0.05   # visual marker position; matches _EXIT_Y in puzzles
+    check_margin: float = 0.03  # extra metres south the target must clear before done
+
+
+@dataclass
 class WorldConfig:
     n_steps: int = 100000
     goal: List[float] = field(default_factory=lambda: [0.4, 0.2, 0.6])
@@ -98,6 +106,7 @@ class WorldConfig:
     scenario: Optional[str] = None
     viewer_lookat: List[float] = field(default_factory=lambda: [0.25, 0.0, 0.04])
     viewer_eye:    List[float] = field(default_factory=lambda: [1.50, 0.0, 0.60])
+    task_done: TaskDoneConfig = field(default_factory=TaskDoneConfig)
 
 
 def _load_config(yaml_path: str) -> WorldConfig:
@@ -127,6 +136,13 @@ def _load_config(yaml_path: str) -> WorldConfig:
         v = raw["viewer"]
         cfg.viewer_lookat = v.get("lookat", cfg.viewer_lookat)
         cfg.viewer_eye    = v.get("eye",    cfg.viewer_eye)
+    if "task_done" in raw:
+        td = raw["task_done"]
+        cfg.task_done = TaskDoneConfig(
+            enabled=td.get("enabled", False),
+            exit_bin_y=td.get("exit_bin_y", -0.05),
+            check_margin=td.get("check_margin", 0.03),
+        )
     return cfg
 
 
@@ -143,9 +159,20 @@ def _get_table_top_z() -> float:
     from pxr import UsdGeom, Usd
     import omni.usd
     stage = omni.usd.get_context().get_stage()
-    prim = stage.GetPrimAtPath("/World/envs/env_0/Static1")
+    prim = stage.GetPrimAtPath("/World/envs/env_0/Static0")
     bbox = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default"]).ComputeWorldBound(prim)
     return float(bbox.GetRange().GetMax()[2])
+
+
+def _spawn_exit_marker(x: float, y: float, z: float) -> None:
+    """Spawn a visual-only plane marking the bin-clearing exit threshold."""
+    cfg = sim_utils.CuboidCfg(
+        size=(0.003, 0.55, 0.10),
+        visual_material=sim_utils.PreviewSurfaceCfg(
+            diffuse_color=(1.0, 0.45, 0.0),
+        ),
+    )
+    cfg.func("/World/ExitThresholdMarker", cfg, translation=(x, y, z))
 
 
 # ===========================================================================
@@ -390,6 +417,20 @@ def main():
     all_steps_done = False
     prev_step_info = 0
 
+    # task_done: physical bin-clearing finish condition (ported from puzzles)
+    _task_done_enabled = cfg.task_done.enabled
+    if _task_done_enabled:
+        env_origin = world.scene.env_origins[0]  # (3,)
+        # _bin_to_mppi_local: mppi_x = bin_y + 0.10; world_x = mppi_x + env_origin_x
+        _exit_x_world = (cfg.task_done.exit_bin_y + 0.10) + env_origin[0].item()
+        _check_x_world = _exit_x_world - cfg.task_done.check_margin
+        _n_obj = len(world.objects)
+        print(f"[world] task_done enabled: marker_x={_exit_x_world:.4f}  "
+              f"check_x={_check_x_world:.4f} (bin_y={cfg.task_done.exit_bin_y})", flush=True)
+        if not headless:
+            marker_y = env_origin[1].item()  # MPPI local y=0 at bin centre
+            _spawn_exit_marker(_exit_x_world, marker_y, table_top_z + 0.05)
+
     for step in range(cfg.n_steps):
         if not simulation_app.is_running():
             break
@@ -464,6 +505,21 @@ def main():
             all_steps_done = True
             print(f"\n[world] All {total_steps} steps completed — exiting.", flush=True)
             break
+
+        if _task_done_enabled:
+            target_x = world.get_object_pos(0)[0][0].item()
+            obstacles_inside = all(
+                world.get_object_pos(i)[0][0].item() >= _exit_x_world
+                for i in range(1, _n_obj)
+            )
+            if target_x <= _check_x_world and obstacles_inside:
+                all_steps_done = True
+                print(
+                    f"\n[world] Task done — target x={target_x:.3f} ≤ {_check_x_world:.3f}, "
+                    f"all obstacles inside.",
+                    flush=True,
+                )
+                break
 
         elapsed = time.time() - t_prev
         t_prev = time.time()
