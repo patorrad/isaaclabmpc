@@ -77,7 +77,7 @@ def make_static_cfgs(stand_urdf: str) -> list:
         init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 0.775)),
     )
 
-    return [stand_cfg, table_cfg]
+    return [table_cfg]
 
 
 def make_block_cfgs(positions: list | None = None) -> list:
