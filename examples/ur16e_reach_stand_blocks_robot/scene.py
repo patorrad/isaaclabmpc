@@ -1,13 +1,11 @@
-"""Shared scene objects for ur16e_reach_stand_blocks.
+"""Shared scene objects for ur16e_reach_stand_blocks_robot.
 
 Kept in a separate module (no AppLauncher bootstrap) so both planner.py
 and world.py can import it safely after SimulationApp is already running.
 
-Block index → puzzle role (matches solution JSON obj_idx):
-  0  puzzle_target     red,  init [0.6127,  0.0797, 0.76]
-  1  puzzle_obstacle_0 blue, init [0.4825,  0.0874, 0.76]
-  2  puzzle_obstacle_1 blue, init [0.4712, -0.0893, 0.76]
-  3  puzzle_obstacle_2 blue, init [0.6095, -0.0735, 0.76]
+Block index → puzzle role (matches solution JSON obj_idx).
+Hardcoded _BLOCK_SPECS positions are MPPI world-frame (fallback only);
+scenario-driven runs convert bin-frame positions via _bin_to_mppi_local().
 """
 
 import isaaclab.sim as sim_utils
@@ -21,12 +19,35 @@ _BLOCK_MASS = 0.2
 _BLOCK_FRICTION = 0.2
 
 # (init_pos, diffuse_color) — order matches solution JSON obj_idx
+# Positions are _bin_to_mppi_local(bin_pos) for ur16e_stand_blocks.yaml (bin_size=0.2).
 _BLOCK_SPECS = [
-    ([0.3127,  0.1797, 0.8], (0.9, 0.2, 0.2)),   # 0: target      red
-    ([0.1825,  0.1874, 0.8], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
-    ([0.1712, -0.1893, 0.8], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
-    # ([0.3095, -0.1735, 0.8], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
+    ([0.3127, 0.3297, 1.230], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.1825, 0.3374, 1.230], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
+    ([0.1712, 0.1608, 1.230], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
+    # ([0.3095, 0.1765, 1.230], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
 ]
+
+# Obstacle colour cycle used when loading from a scenario file.
+_OBSTACLE_COLORS = [
+    (0.3, 0.5, 0.9),  # blue
+    (0.3, 0.9, 0.2),  # green
+    (0.9, 0.9, 0.2),  # yellow
+    (0.9, 0.5, 0.2),  # orange
+]
+
+
+def _bin_to_mppi_local(bin_pos: list) -> list:
+    """Constant linear transform: bin frame → Isaac Lab world frame (robot rig).
+
+    R = [[0,1,0],[1,0,0],[0,0,1]]  (swap X↔Y)
+    t = [0.10, 0.10, 1.205]        (near-robot offset + robot-rig table surface)
+
+    Table is at Z=1.17; top surface = 1.17 + 0.035 = 1.205.
+    All blocks land at MPPI Y ∈ [0.10, bin_size+0.10] — positive-Y side only.
+    Matches puzzles/main.py:_bin_to_mppi_local() except for the Z offset.
+    """
+    x, y, z = bin_pos
+    return [y + 0.10, x + 0.10, z + 1.205]
 
 
 def make_static_cfgs(stand_urdf: str) -> list:
@@ -58,13 +79,25 @@ def make_static_cfgs(stand_urdf: str) -> list:
     return [stand_cfg, table_cfg]
 
 
-def make_block_cfgs() -> list:
-    """Build RigidObjectCfg entries for the four puzzle blocks.
+def make_block_cfgs(positions: list | None = None) -> list:
+    """Build RigidObjectCfg entries for the puzzle blocks.
 
-    Returns a list ordered by obj_idx so it maps directly to the solution JSON.
+    Parameters
+    ----------
+    positions : list of [x, y, z] in MPPI world frame, ordered [target, obs_0, ...].
+        If None, uses hardcoded _BLOCK_SPECS (backwards compatible).
+        Convert from bin frame first via _bin_to_mppi_local() if needed.
     """
+    if positions is None:
+        specs = _BLOCK_SPECS
+    else:
+        target_color = (0.9, 0.2, 0.2)
+        specs = [
+            (pos, target_color if i == 0 else _OBSTACLE_COLORS[(i - 1) % len(_OBSTACLE_COLORS)])
+            for i, pos in enumerate(positions)
+        ]
     cfgs = []
-    for init_pos, color in _BLOCK_SPECS:
+    for init_pos, color in specs:
         cfgs.append(RigidObjectCfg(
             prim_path="PLACEHOLDER",  # replaced by IsaacLabWrapper
             spawn=sim_utils.CuboidCfg(
