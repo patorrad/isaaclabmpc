@@ -18,24 +18,6 @@ _BLOCK_SIZE = (0.05, 0.05, 0.05)
 _BLOCK_MASS = 0.2
 _BLOCK_FRICTION = 0.2
 
-# (init_pos, diffuse_color) — order matches solution JSON obj_idx
-# Positions are _bin_to_mppi_local(bin_pos) for ur16e_stand_blocks.yaml (bin_size=0.2).
-_BLOCK_SPECS = [
-    ([0.3127, 0.3297, 0.835], (0.9, 0.2, 0.2)),   # 0: target      red
-    ([0.1825, 0.3374, 0.835], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
-    # ([0.1712, 0.1608, 0.835], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
-    # ([0.3095, 0.1765, 0.835], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
-]
-
-# Obstacle colour cycle used when loading from a scenario file.
-_OBSTACLE_COLORS = [
-    (0.3, 0.5, 0.9),  # blue
-    (0.3, 0.9, 0.2),  # green
-    (0.9, 0.9, 0.2),  # yellow
-    (0.9, 0.5, 0.2),  # orange
-]
-
-
 def _bin_to_mppi_local(bin_pos: list) -> list:
     """Constant linear transform: bin frame → Isaac Lab world frame.
 
@@ -47,6 +29,25 @@ def _bin_to_mppi_local(bin_pos: list) -> list:
     """
     x, y, z = bin_pos
     return [y + 0.10, x + 0.10, z + 0.810]
+
+
+# Bin-frame source positions from ur16e_stand_blocks.yaml (bin_size=0.2).
+# _BLOCK_SPECS is derived from these so the fallback stays in sync with the transform.
+_BIN_BLOCK_SPECS = [
+    ([0.2297, 0.2127, 0.025], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.2374, 0.0825, 0.025], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
+    # ([0.0608, 0.0712, 0.025], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
+    # ([0.0765, 0.2095, 0.025], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
+]
+_BLOCK_SPECS = [(_bin_to_mppi_local(pos), color) for pos, color in _BIN_BLOCK_SPECS]
+
+# Obstacle colour cycle used when loading from a scenario file.
+_OBSTACLE_COLORS = [
+    (0.3, 0.5, 0.9),  # blue
+    (0.3, 0.9, 0.2),  # green
+    (0.9, 0.9, 0.2),  # yellow
+    (0.9, 0.5, 0.2),  # orange
+]
 
 
 def make_static_cfgs(stand_urdf: str) -> list:
@@ -85,7 +86,7 @@ def make_block_cfgs(positions: list | None = None) -> list:
     ----------
     positions : list of [x, y, z] in MPPI local frame, ordered [target, obs_0, ...].
         If None, uses hardcoded _BLOCK_SPECS (backwards compatible).
-        Convert from bin frame first via _bin_to_mppi_local() if needed.
+        Convert from bin frame first via _16mppi_local() if needed.
     """
     if positions is None:
         specs = _BLOCK_SPECS
