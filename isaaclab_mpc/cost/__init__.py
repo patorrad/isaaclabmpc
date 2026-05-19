@@ -6,6 +6,7 @@ from .contact_force_cost import ContactForceCost
 from .joint_vel_cost import JointVelCost
 from .singularity_cost import SingularityCost
 from .gaussian_projection import GaussianProjection
+from .tcp_floor_cost import TcpFloorCost
 
 __all__ = [
     "DistCost",
@@ -16,4 +17,5 @@ __all__ = [
     "JointVelCost",
     "SingularityCost",
     "GaussianProjection",
+    "TcpFloorCost",
 ]
