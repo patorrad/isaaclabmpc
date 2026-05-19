@@ -421,7 +421,7 @@ def main():
     _task_done_enabled = cfg.task_done.enabled
     if _task_done_enabled:
         env_origin = world.scene.env_origins[0]  # (3,)
-        # _bin_to_mppi_local: mppi_x = bin_y + 0.10; world_x = mppi_x + env_origin_x
+        # _bin_to_mppi_local: mppi_x = bin_y + 0.10, mppi_y = bin_x + 0.10; world_x = mppi_x + env_origin_x
         _exit_x_world = (cfg.task_done.exit_bin_y + 0.10) + env_origin[0].item()
         _check_x_world = _exit_x_world - cfg.task_done.check_margin
         _n_obj = len(world.objects)
