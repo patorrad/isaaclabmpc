@@ -25,6 +25,11 @@ import argparse
 from isaaclab.app import AppLauncher
 
 parser = argparse.ArgumentParser(description="UR16e MPPI reach planner (Isaac Lab)")
+parser.add_argument("--scenario", type=str, default=None,
+                    help="Path to a puzzles YAML scenario file. "
+                         "Overrides the hardcoded block positions in scene.py.")
+parser.add_argument("--solution_path", type=str, default=None,
+                    help="Path to puzzle solution JSON. Overrides cfg.solution_path.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
 args_cli.headless = True          # planner always runs headless
@@ -64,7 +69,7 @@ from isaaclab_mpc.cost import (
 )
 from isaaclab_mpc.cost.utils import quat_apply
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
-from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
 
 
 # ===========================================================================
@@ -416,7 +421,19 @@ def main():
     cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
     cfg = _load_config(cfg_path)
 
-    block_cfgs = make_block_cfgs()
+    if args_cli.solution_path:
+        cfg.solution_path = args_cli.solution_path
+
+    scenario_path = args_cli.scenario
+    block_positions = None
+    if scenario_path is not None:
+        with open(scenario_path) as f:
+            sc = yaml.safe_load(f)
+        is_ = sc["initial_state"]
+        bin_positions = [is_["target_pos"]] + [o["pos"] for o in is_["obstacles"]]
+        block_positions = [_bin_to_mppi_local(p) for p in bin_positions]
+
+    block_cfgs = make_block_cfgs(positions=block_positions)
     static_cfgs = make_static_cfgs(stand_urdf=cfg.stand_urdf)
     # static_cfgs[1] is the table: center Z + half-thickness = surface Z
     _table_cfg = static_cfgs[0]
