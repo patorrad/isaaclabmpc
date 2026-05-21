@@ -18,6 +18,24 @@ _BLOCK_SIZE = (0.05, 0.05, 0.05)
 _BLOCK_MASS = 0.2
 _BLOCK_FRICTION = 0.2
 
+# (init_pos, diffuse_color) — order matches solution JSON obj_idx
+# Positions are _bin_to_mppi_local(bin_pos) for ur16e_stand_blocks.yaml (bin_size=0.2).
+_BLOCK_SPECS = [
+    ([0.3127, 0.3297, 1.230], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.1825, 0.3374, 1.230], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
+    # ([0.1712, 0.1608, 1.230], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
+    # ([0.3095, 0.1765, 1.230], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
+]
+
+# Obstacle colour cycle used when loading from a scenario file.
+_OBSTACLE_COLORS = [
+    (0.3, 0.5, 0.9),  # blue
+    (0.3, 0.9, 0.2),  # green
+    # (0.9, 0.9, 0.2),  # yellow
+    # (0.9, 0.5, 0.2),  # orange
+]
+
+
 def _bin_to_mppi_local(bin_pos: list) -> list:
     """Constant linear transform: bin frame → Isaac Lab world frame (robot rig).
 
