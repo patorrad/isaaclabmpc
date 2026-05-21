@@ -257,6 +257,13 @@ class Objective:
             solution = json.load(f)
 
         self.steps = solution["steps"]
+        frame = solution.get("coordinate_frame", "robot")
+        if frame == "bin":
+            print("[Objective] coordinate_frame=bin — converting step positions via _bin_to_mppi_local")
+            for step in self.steps:
+                step["end_pos"] = _bin_to_mppi_local(step["end_pos"])
+                if "start_pos" in step:
+                    step["start_pos"] = _bin_to_mppi_local(step["start_pos"])
         obj_size = solution.get("env_config", {}).get("OBJ_SIZE", 0.05)
         self.align_gate_dist = obj_size / 2 + 0.01  # back face + 1 cm standoff
         self.current_step = 0

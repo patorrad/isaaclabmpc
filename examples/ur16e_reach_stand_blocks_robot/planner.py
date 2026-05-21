@@ -261,6 +261,13 @@ class Objective:
             solution = json.load(f)
 
         self.steps = solution["steps"]
+        frame = solution.get("coordinate_frame", "robot")
+        if frame == "bin":
+            print("[Objective] coordinate_frame=bin — converting step positions via _bin_to_mppi_local")
+            for step in self.steps:
+                step["end_pos"] = _bin_to_mppi_local(step["end_pos"])
+                if "start_pos" in step:
+                    step["start_pos"] = _bin_to_mppi_local(step["start_pos"])
         self.current_step = 0
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True

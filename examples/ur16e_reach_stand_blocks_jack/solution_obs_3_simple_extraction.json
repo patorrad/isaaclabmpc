@@ -1,4 +1,5 @@
 {
+  "coordinate_frame": "robot",
   "env_config": {
     "BIN_W": 0.3,
     "BIN_D": 0.3,
