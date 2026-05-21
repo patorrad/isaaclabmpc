@@ -86,7 +86,7 @@ def make_block_cfgs(positions: list | None = None) -> list:
     ----------
     positions : list of [x, y, z] in MPPI local frame, ordered [target, obs_0, ...].
         If None, uses hardcoded _BLOCK_SPECS (backwards compatible).
-        Convert from bin frame first via _16mppi_local() if needed.
+        Convert from bin frame first via _bin_to_mppi_local() if needed.
     """
     if positions is None:
         specs = _BLOCK_SPECS
