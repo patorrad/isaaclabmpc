@@ -342,6 +342,7 @@ class Objective:
             goal = torch.tensor(step["end_pos"], dtype=torch.float32)
             dist = torch.linalg.norm(self._last_obj_pos.cpu() - goal).item()
             if dist < self.step_threshold:
+                print(self.current_step, step, goal, dist)
                 self.current_step += 1
                 if self.current_step < len(self.steps):
                     ns = self.steps[self.current_step]

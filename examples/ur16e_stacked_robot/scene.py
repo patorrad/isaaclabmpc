@@ -27,7 +27,7 @@ def _bin_to_mppi_local(bin_pos: list) -> list:
     Matches puzzles/main.py:_bin_to_mppi_local() except for the Z offset.
     """
     x, y, z = bin_pos
-    return [y + 0.10, x + 0.10, z + 1.225]
+    return [y + 0.6, x - 0.10, z + 1.225]
 
 
 # Bin-frame source positions from ur16e_stand_blocks.yaml (bin_size=0.2).
