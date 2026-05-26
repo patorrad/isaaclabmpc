@@ -65,7 +65,7 @@ from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabConfig
 from isaaclab_mpc.cost import (
     DistCost, OrientationCost, HeightMatchCost, PushAlignCost,
     ContactForceCost, JointVelCost, SingularityCost, GaussianProjection,
-    TcpFloorCost,
+    TcpFloorCost, AboveObjectCost,
 )
 from isaaclab_mpc.cost.utils import quat_apply
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
@@ -87,6 +87,7 @@ class CostWeights:
     joint_vel:    float = 3.0
     singularity:  float = 0.05
     tcp_floor:    float = 30.0
+    above_target: float = 0.0
 
 
 @dataclass
@@ -115,6 +116,7 @@ class GaussianProjectionConfig:
     collision:    GaussianProjParams = field(default_factory=GaussianProjParams)
     singularity:  GaussianProjParams = field(default_factory=GaussianProjParams)
     tcp_floor:    GaussianProjParams = field(default_factory=GaussianProjParams)
+    above_target: GaussianProjParams = field(default_factory=GaussianProjParams)
 
 
 @dataclass
@@ -241,6 +243,7 @@ class Objective:
             "joint_vel":    w.joint_vel,
             "singularity":  w.singularity,
             "tcp_floor":    w.tcp_floor,
+            "above_target": w.above_target,
         }
         self._costs = {
             "robot_to_obj": DistCost(),
@@ -291,6 +294,9 @@ class Objective:
                 step["end_pos"] = _bin_to_mppi_local(step["end_pos"])
                 if "start_pos" in step:
                     step["start_pos"] = _bin_to_mppi_local(step["start_pos"])
+        obj_size = solution.get("env_config", {}).get("OBJ_SIZE", 0.05)
+        self._obj_half_size = obj_size / 2
+        self._costs["above_target"] = AboveObjectCost(obj_half_size=self._obj_half_size)
         self.current_step = 0
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True
@@ -302,7 +308,7 @@ class Objective:
 
         plt.ion()
         colors = ["steelblue", "tomato", "forestgreen", "goldenrod",
-                  "mediumpurple", "darkorange", "teal", "sienna", "crimson"]
+                  "mediumpurple", "darkorange", "teal", "sienna", "crimson", "darkviolet"]
         self._fig, self._ax = plt.subplots(figsize=(8, 4))
         self._fig.suptitle("Avg weighted cost per component (across trajectories)")
         self._bars = self._ax.bar(self._labels, [0.0] * len(self._labels),
@@ -399,6 +405,10 @@ class Objective:
             raw["singularity"] = self._costs["singularity"](sim.get_ee_jacobian())
         if "tcp_floor" in self._active_costs:
             raw["tcp_floor"] = self._costs["tcp_floor"](tcp_pos[:, 2])
+        if "above_target" in self._active_costs:
+            target_pos  = sim.get_object_pos(0)   # (B, 3) — target is always idx 0
+            target_quat = sim.get_object_quat(0)  # (B, 4) wxyz
+            raw["above_target"] = self._costs["above_target"](tcp_pos, target_pos, target_quat)
 
         for t in raw.values():
             t[torch.isnan(t)] = 100.0
