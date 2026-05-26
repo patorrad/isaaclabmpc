@@ -11,6 +11,7 @@ from isaaclab_mpc.cost import (
     JointVelCost,
     SingularityCost,
     GaussianProjection,
+    AboveObjectCost,
 )
 from isaaclab_mpc.cost.utils import quat_apply, quat_to_yaw_pitch
 
@@ -145,3 +146,97 @@ def test_gaussian_projection_saturates_at_infinity():
     proj = GaussianProjection(n=2, c=0.5, s=0.0, r=0.0)
     x = torch.full((B,), 100.0)
     assert torch.allclose(proj(x), torch.ones(B), atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# AboveObjectCost
+# ---------------------------------------------------------------------------
+
+def _identity_quat(n: int) -> torch.Tensor:
+    """Return n identity quaternions (w=1, x=y=z=0)."""
+    q = torch.zeros(n, 4)
+    q[:, 0] = 1.0
+    return q
+
+
+def _yaw_quat(angle_rad: float, n: int) -> torch.Tensor:
+    """Return n unit quaternions representing a yaw rotation about world Z."""
+    q = torch.zeros(n, 4)
+    q[:, 0] = torch.cos(torch.tensor(angle_rad / 2))   # w
+    q[:, 3] = torch.sin(torch.tensor(angle_rad / 2))   # z
+    return q
+
+
+def test_above_object_cost_below_top():
+    """TCP below the cube top → cost must be zero regardless of XY."""
+    half = 0.025
+    cost = AboveObjectCost(obj_half_size=half)
+    obj_pos  = torch.zeros(B, 3)
+    obj_quat = _identity_quat(B)
+    # TCP directly above in XY but below cube top (z = half - epsilon)
+    tcp_pos = torch.zeros(B, 3)
+    tcp_pos[:, 2] = half - 1e-4
+    assert torch.allclose(cost(tcp_pos, obj_pos, obj_quat), torch.zeros(B), atol=1e-6)
+
+
+def test_above_object_cost_outside_xy():
+    """TCP above the cube top but outside the XY footprint → cost must be zero."""
+    half = 0.025
+    cost = AboveObjectCost(obj_half_size=half)
+    obj_pos  = torch.zeros(B, 3)
+    obj_quat = _identity_quat(B)
+    tcp_pos = torch.zeros(B, 3)
+    tcp_pos[:, 2] = half + 0.05   # well above
+    tcp_pos[:, 0] = half + 1e-3   # just outside x footprint
+    assert torch.allclose(cost(tcp_pos, obj_pos, obj_quat), torch.zeros(B), atol=1e-6)
+
+
+def test_above_object_cost_boundary():
+    """TCP exactly at cube-top z and centered → above_z = 0 → cost = 0."""
+    half = 0.025
+    cost = AboveObjectCost(obj_half_size=half)
+    obj_pos  = torch.zeros(B, 3)
+    obj_quat = _identity_quat(B)
+    tcp_pos = torch.zeros(B, 3)
+    tcp_pos[:, 2] = half          # exactly at top face
+    assert torch.allclose(cost(tcp_pos, obj_pos, obj_quat), torch.zeros(B), atol=1e-6)
+
+
+def test_above_object_cost_centred_above():
+    """TCP one half-size above and centered → cost == 1.0."""
+    half = 0.025
+    cost = AboveObjectCost(obj_half_size=half)
+    obj_pos  = torch.zeros(B, 3)
+    obj_quat = _identity_quat(B)
+    tcp_pos = torch.zeros(B, 3)
+    tcp_pos[:, 2] = half + half   # one half above top face
+    assert torch.allclose(cost(tcp_pos, obj_pos, obj_quat), torch.ones(B), atol=1e-6)
+
+
+def test_above_object_cost_yaw_rotation():
+    """Cube rotated 90° about Z: TCP at original x-footprint edge is now outside → zero."""
+    half = 0.025
+    import math
+    cost = AboveObjectCost(obj_half_size=half)
+    obj_pos  = torch.zeros(1, 3)
+    # 90° yaw: local x → world y, local y → -world x
+    obj_quat = _yaw_quat(math.pi / 2, 1)
+    tcp_pos = torch.zeros(1, 3)
+    tcp_pos[0, 2] = half + 0.05   # above
+    # In world frame, put TCP at (half + epsilon, 0, ...) — that's inside the original
+    # axis-aligned footprint but OUTSIDE the rotated footprint (which now spans world-y).
+    tcp_pos[0, 0] = half - 1e-4   # inside unrotated, but local x after 90° yaw is world -y
+    tcp_pos[0, 1] = 0.0
+    # After 90° yaw: local = R^{-1}(tcp - obj). Local x = -(world y) = 0, local y = world x ≈ half.
+    # So local x ≈ 0 (inside), local y ≈ half (exactly at boundary) → x_in > 0, y_in ≈ 0.
+    # Verify nonzero cost when directly above in rotated frame (tcp at world y = half/2).
+    tcp_centered = torch.zeros(1, 3)
+    tcp_centered[0, 2] = half + 0.05
+    tcp_centered[0, 1] = half / 2   # world y maps to local x under 90° yaw
+    assert cost(tcp_centered, obj_pos, obj_quat).item() > 0.0
+
+    # TCP at world x = half+epsilon is outside the rotated footprint (local y = world x > half)
+    tcp_outside = torch.zeros(1, 3)
+    tcp_outside[0, 2] = half + 0.05
+    tcp_outside[0, 0] = half + 1e-3  # local y after 90° yaw = world x > half → outside
+    assert torch.allclose(cost(tcp_outside, obj_pos, obj_quat), torch.zeros(1), atol=1e-6)

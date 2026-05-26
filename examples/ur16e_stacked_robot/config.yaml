@@ -61,6 +61,13 @@ isaaclab:
   env_spacing: 5.0
 stand_urdf: "/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/stand/stand.urdf"
 
+viewer:
+  # x, y in world frame; z is height ABOVE the table surface.
+  # Table top z is queried from the USD prim at runtime, so this tracks
+  # the table automatically if it moves.
+  lookat: [0.25, 0.0, 0.04]   # centre of block manipulation area
+  eye:    [1.50, 0.0, 0.60]   # across from robot, elevated
+
 costs:
   weights:
     robot_to_obj:  30.0    # TCP distance to current block
@@ -72,6 +79,7 @@ costs:
     joint_vel:     3.0    # joint velocity magnitude
     singularity:   0.05   # reciprocal manipulability (1/|det J|)
     tcp_floor:     10.0   # penalty for TCP going below table surface + offset
+    above_target:   0.0   # penalty for TCP above target cube's rotated XY footprint
   push_align_gate_width: 0.05   # sigmoid transition width (metres)
   tcp_floor_offset: 0.015        # safety margin above table surface (metres)
   gaussian_projection:
