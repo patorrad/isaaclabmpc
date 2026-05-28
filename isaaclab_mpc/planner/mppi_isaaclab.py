@@ -72,9 +72,11 @@ class MPPIIsaacLabPlanner:
         object_cfgs: Optional[list] = None,
         contact_sensor_cfgs: Optional[list] = None,
         static_cfgs: Optional[list] = None,
+        scenario_info: dict = None,
     ):
         self.cfg = cfg
         self.objective = objective
+        self._scenario_info = scenario_info or {}
         self._latest_dof_state: Optional[bytes] = None
         self._latest_object_states: Optional[List] = None
         self.num_envs = cfg.mppi.num_samples
@@ -318,3 +320,8 @@ class MPPIIsaacLabPlanner:
     def test(self, msg: str):
         """Ping/echo for connection testing."""
         print(f"[MPPIIsaacLabPlanner] test: {msg}")
+
+    def get_scenario_info(self) -> str:
+        """Return JSON-encoded scenario info (bin-frame block positions + env config)."""
+        import json as _json
+        return _json.dumps(self._scenario_info)

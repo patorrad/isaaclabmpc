@@ -30,6 +30,8 @@ parser.add_argument("--scenario", type=str, default=None,
                          "Overrides the hardcoded block positions in scene.py.")
 parser.add_argument("--solution_path", type=str, default=None,
                     help="Path to puzzle solution JSON. Overrides cfg.solution_path.")
+parser.add_argument("--defer_solution", action="store_true",
+                    help="Start without a solution; receive steps via reset_episode() RPC.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
 args_cli.headless = True          # planner always runs headless
@@ -69,7 +71,7 @@ from isaaclab_mpc.cost import (
 )
 from isaaclab_mpc.cost.utils import quat_apply
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
-from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local
+from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local, _BLOCK_SPECS
 
 
 # ===========================================================================
@@ -124,6 +126,7 @@ class CostConfig:
     weights: CostWeights = field(default_factory=CostWeights)
     push_align_gate_width: float = 0.03
     tcp_floor_offset: float = 0.05
+    obj_half_size: float = 0.025
     gaussian_projection: GaussianProjectionConfig = field(default_factory=GaussianProjectionConfig)
 
 
@@ -231,7 +234,7 @@ class Objective:
     _PLOT_INTERVAL = 50
     _EMA_ALPHA     = 0.05
 
-    def __init__(self, cfg: PlannerConfig, table_surface_z: float = 0.0):
+    def __init__(self, cfg: PlannerConfig, table_surface_z: float = 0.0, steps_override: list | None = None):
         w = cfg.costs.weights
         self.weights = {
             "robot_to_obj": w.robot_to_obj,
@@ -257,6 +260,7 @@ class Objective:
             "singularity":  SingularityCost(),
             "tcp_floor":    TcpFloorCost(threshold=table_surface_z + cfg.costs.tcp_floor_offset,
                                          table_surface_z=table_surface_z),
+            "above_target": AboveObjectCost(obj_half_size=cfg.costs.obj_half_size)
         }
         print(f"[Objective] TcpFloorCost: table_surface_z={table_surface_z:.4f}, "
               f"offset={cfg.costs.tcp_floor_offset:.4f}, "
@@ -283,20 +287,24 @@ class Objective:
 
         self.step_threshold = cfg.step_threshold
 
-        with open(cfg.solution_path) as f:
-            solution = json.load(f)
+        if steps_override is not None:
+            self.steps = steps_override
+            self._obj_half_size = 0.025
+        else:
+            with open(cfg.solution_path) as f:
+                solution = json.load(f)
 
-        self.steps = solution["steps"]
-        frame = solution.get("coordinate_frame", "robot")
-        if frame == "bin":
-            print("[Objective] coordinate_frame=bin — converting step positions via _bin_to_mppi_local")
-            for step in self.steps:
-                step["end_pos"] = _bin_to_mppi_local(step["end_pos"])
-                if "start_pos" in step:
-                    step["start_pos"] = _bin_to_mppi_local(step["start_pos"])
-        obj_size = solution.get("env_config", {}).get("OBJ_SIZE", 0.05)
-        self._obj_half_size = obj_size / 2
-        self._costs["above_target"] = AboveObjectCost(obj_half_size=self._obj_half_size)
+            self.steps = solution["steps"]
+            frame = solution.get("coordinate_frame", "robot")
+            if frame == "bin":
+                print("[Objective] coordinate_frame=bin — converting step positions via _bin_to_mppi_local")
+                for step in self.steps:
+                    step["end_pos"] = _bin_to_mppi_local(step["end_pos"])
+                    if "start_pos" in step:
+                        step["start_pos"] = _bin_to_mppi_local(step["start_pos"])
+            obj_size = solution.get("env_config", {}).get("OBJ_SIZE", 0.05)
+            self._obj_half_size = obj_size / 2
+        
         self.current_step = 0
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True
@@ -318,7 +326,14 @@ class Objective:
         plt.tight_layout()
         plt.show()
 
-        print(f"[Objective] Loaded {len(self.steps)} steps from {cfg.solution_path}")
+        try:
+            from isaacsim.util.debug_draw import _debug_draw
+            self._draw = _debug_draw.acquire_debug_draw_interface()
+        except Exception:
+            self._draw = None
+
+        src = "steps_override" if steps_override is not None else cfg.solution_path
+        print(f"[Objective] Loaded {len(self.steps)} steps from {src}")
         for i, step in enumerate(self.steps):
             print(f"  Step {i}: push {step['obj_name']} (idx {step['obj_idx']}) → {step['end_pos']}")
 
@@ -351,6 +366,17 @@ class Objective:
                 else:
                     print(f"\n[Step] All {len(self.steps)} steps completed!")
         self._first_call = True
+
+    def reset_episode(self, steps: list | None = None):
+        """Replace solution steps and reset to step 0. Called by MPPIIsaacLabPlanner.reset_episode()."""
+        if steps is not None:
+            self.steps = steps
+            print(f"[Objective] reset_episode: loaded {len(steps)} steps")
+            for i, step in enumerate(steps):
+                print(f"  Step {i}: push {step['obj_name']} (idx {step['obj_idx']}) → {step['end_pos']}")
+        self.current_step = 0
+        self._first_call = True
+        self._last_obj_pos = None
 
     def compute_cost(self, sim) -> torch.Tensor:
         device = sim.device
@@ -386,8 +412,7 @@ class Objective:
         robot_to_obj_dist = self._costs["robot_to_obj"](robot_to_obj) if _need_dist else None
 
         raw = {}
-        if "robot_to_obj" in self._active_costs:
-            raw["robot_to_obj"] = robot_to_obj_dist
+        
         if "obj_to_goal" in self._active_costs:
             raw["obj_to_goal"] = self._costs["obj_to_goal"](obj_to_goal)
         if "robot_ori" in self._active_costs:
@@ -396,6 +421,9 @@ class Objective:
             raw["height_match"] = self._costs["height_match"](tcp_pos[:, 2], obj_pos[:, 2])
         if "push_align" in self._active_costs:
             raw["push_align"] = self._costs["push_align"](robot_to_obj, obj_to_goal, robot_to_obj_dist)
+        if "robot_to_obj" in self._active_costs:
+            raw["robot_to_obj"] = robot_to_obj_dist
+            raw["robot_to_obj"][raw["push_align"] > .1] = 1/(raw["robot_to_obj"][raw["push_align"] > .1]+.25+.000001)
         if "collision" in self._active_costs:
             raw["collision"] = self._costs["collision"](
                 sim.get_contact_forces(0)                        # (num_envs, 1, 3) net
@@ -407,9 +435,21 @@ class Objective:
         if "tcp_floor" in self._active_costs:
             raw["tcp_floor"] = self._costs["tcp_floor"](tcp_pos[:, 2])
         if "above_target" in self._active_costs:
-            target_pos  = sim.get_object_pos(0)   # (B, 3) — target is always idx 0
-            target_quat = sim.get_object_quat(0)  # (B, 4) wxyz
-            raw["above_target"] = self._costs["above_target"](tcp_pos, target_pos, target_quat)
+            raw["above_target"] = 0.0
+            block_pos0 = []
+            for i in range(len(_BLOCK_SPECS)):
+                target_pos  = sim.get_object_pos(i)  # (B, 3)
+                target_quat = sim.get_object_quat(i)  # (B, 4) wxyz
+                raw["above_target"] += self._costs["above_target"](tcp_pos, target_pos, target_quat)
+                block_pos0.append(target_pos[0].detach().cpu())
+
+            if self._draw is not None:
+                origin = sim.scene.env_origins[0].cpu()
+                self._draw.clear_points()
+                tp = tuple((tcp_pos[0].detach().cpu() + origin).tolist())
+                self._draw.draw_points([tp], [(0.0, 0.6, 1.0, 1.0)], [12.0])
+                bps = [tuple((bp + origin).tolist()) for bp in block_pos0]
+                self._draw.draw_points(bps, [(1.0, 0.2, 0.2, 1.0)] * len(bps), [10.0] * len(bps))
 
         for t in raw.values():
             t[torch.isnan(t)] = 100.0
@@ -452,6 +492,38 @@ def main():
         block_positions = [_bin_to_mppi_local(p) for p in bin_positions]
 
     block_cfgs = make_block_cfgs(positions=block_positions)
+
+    # Build scenario_info dict for the get_scenario_info() RPC.
+    # Positions are stored in bin frame so pipeline.py can use them directly.
+    if block_positions is not None:
+        # Inverse of _bin_to_mppi_local: world=[y+0.35, x+0.075, z+1.225]
+        def _world_to_bin(wp):
+            return [wp[1] - 0.075, wp[0] - 0.35, wp[2] - 1.225]
+        bin_positions_info = [_world_to_bin(p) for p in block_positions]
+        _sc_bin_size       = float(sc.get("bin_size", 0.3))
+        _sc_wall_thickness = float(sc.get("wall_thickness", 0.02))
+        _sc_friction       = float(sc.get("friction", 0.2))
+    else:
+        bin_positions_info = [spec[0] for spec in _BIN_BLOCK_SPECS]
+        _sc_bin_size, _sc_wall_thickness, _sc_friction = 0.2, 0.02, 0.2
+    scenario_info = {
+        "initial_state": {
+            "target_pos":  bin_positions_info[0],
+            "target_quat": [1.0, 0.0, 0.0, 0.0],
+            "obstacles": [
+                {"pos": p, "quat": [1.0, 0.0, 0.0, 0.0]}
+                for p in bin_positions_info[1:]
+            ],
+        },
+        "env_config": {
+            "n_obstacles":    len(bin_positions_info) - 1,
+            "obj_size":       0.05,
+            "bin_size":       _sc_bin_size,
+            "wall_thickness": _sc_wall_thickness,
+            "friction":       _sc_friction,
+        },
+    }
+
     static_cfgs = make_static_cfgs(stand_urdf=cfg.stand_urdf)
     # static_cfgs[1] is the table: center Z + half-thickness = surface Z
     _table_cfg = static_cfgs[0]
@@ -477,7 +549,8 @@ def main():
         )
     )
 
-    objective = Objective(cfg, table_surface_z=table_surface_z)
+    objective = Objective(cfg, table_surface_z=table_surface_z,
+                          steps_override=[] if args_cli.defer_solution else None)
     planner = MPPIIsaacLabPlanner(
         cfg,
         objective,
@@ -486,6 +559,7 @@ def main():
         object_cfgs=block_cfgs,
         static_cfgs=static_cfgs,
         contact_sensor_cfgs=[robot_contact_sensor],
+        scenario_info=scenario_info,
     )
 
     server = zerorpc.Server(planner)
