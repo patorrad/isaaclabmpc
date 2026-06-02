@@ -16,35 +16,27 @@ _BLOCK_SIZE = (0.05, 0.05, 0.05)
 _BLOCK_MASS = 0.2
 _BLOCK_FRICTION = 0.2
 
-# Physical bin placement — update BIN_OFF_X / BIN_OFF_Y after re-measuring
-# the north-wall corner (NS=BIN_D, EW=0) in MPPI world frame.
-BIN_D     = 0.27   # bin NS depth in metres (bin_size × bin_size_factor)
-BIN_OFF_X = 0.10   # MPPI x of north wall (NS=BIN_D side, near robot)
-BIN_OFF_Y = 0.10   # MPPI y of EW=0 edge
+def _bin_to_mppi_local(bin_pos: list) -> list:
+    """Constant linear transform: bin frame → Isaac Lab world frame (stacked robot rig).
 
+    R = [[0,1,0],[1,0,0],[0,0,1]]  (swap X↔Y)
+    t = [0.10, 0.10, 1.225]        (near-robot offset + stacked-rig table surface)
 
-def _bin_to_mppi_local(bin_pos: list, bin_d: float = BIN_D) -> list:
-    """Bin frame (x=NS/forward, y=EW/lateral) → Isaac Lab world frame.
-
-    Physical orientation: bin exit faces camera (+MPPI_x direction).
-      NS=0     (exit)       → MPPI x = bin_d + BIN_OFF_X  (high x, toward camera)
-      NS=bin_d (north wall) → MPPI x = BIN_OFF_X          (low x, near robot)
-      EW maps directly to MPPI y (no flip).
-
-    Table surface z = 1.225 m (table base 1.19 + top plate 0.035).
+    Table is at Z=1.19; top surface = 1.19 + 0.035 = 1.225.
+    All blocks land at MPPI Y ∈ [0.10, bin_size+0.10] — positive-Y side only.
+    Matches puzzles/main.py:_bin_to_mppi_local() except for the Z offset.
     """
     x, y, z = bin_pos
-    return [bin_d - x + BIN_OFF_X, y + BIN_OFF_Y, z + 1.225]
+    return [y + 0.10, x + 0.10, z + 1.225]
 
 
 # Bin-frame source positions from ur16e_stand_blocks.yaml (bin_size=0.2).
-# Convention: pos = [NS/forward, EW/lateral, z].
 # _BLOCK_SPECS is derived from these so the fallback stays in sync with the transform.
 _BIN_BLOCK_SPECS = [
-    ([0.2127, 0.2297, 0.025], (0.9, 0.2, 0.2)),   # 0: target      red
-    ([0.0825, 0.2374, 0.025], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
-    ([0.0712, 0.0608, 0.025], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
-    # ([0.2095, 0.0765, 0.025], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
+    ([0.2297, 0.2127, 0.025], (0.9, 0.2, 0.2)),   # 0: target      red
+    ([0.2374, 0.0825, 0.025], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
+    ([0.0608, 0.0712, 0.025], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
+    # ([0.0765, 0.2095, 0.025], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
 ]
 _BLOCK_SPECS = [(_bin_to_mppi_local(pos), color) for pos, color in _BIN_BLOCK_SPECS]
 
