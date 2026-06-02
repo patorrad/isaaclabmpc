@@ -236,6 +236,10 @@ class MPPIIsaacLabPlanner:
         elif self._latest_object_states:
             object_states = self._latest_object_states
 
+        # Resolve target-relative step positions on the first call that has object states.
+        if object_states and hasattr(self.objective, 'resolve_target_frame'):
+            self.objective.resolve_target_frame(object_states[0][0])
+
         self.sim.reset_to_state(q, dq, object_states=object_states if object_states else None)
 
         # for i in range(len(self.sim.objects)):

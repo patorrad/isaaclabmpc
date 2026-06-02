@@ -88,6 +88,8 @@ class WorldConfig:
     stand_urdf: str = ""
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
+    viewer_lookat: List[float] = field(default_factory=lambda: [0.25, 0.0, 0.04])
+    viewer_eye:    List[float] = field(default_factory=lambda: [1.50, 0.0, 0.60])
 
 
 def _load_config(yaml_path: str) -> WorldConfig:
@@ -104,7 +106,25 @@ def _load_config(yaml_path: str) -> WorldConfig:
     if "isaaclab" in raw:
         il = raw["isaaclab"]
         cfg.isaaclab = IsaacLabCfg(dt=il.get("dt", 1.0 / 60.0))
+    if "viewer" in raw:
+        v = raw["viewer"]
+        cfg.viewer_lookat = v.get("lookat", cfg.viewer_lookat)
+        cfg.viewer_eye    = v.get("eye",    cfg.viewer_eye)
     return cfg
+
+
+# ===========================================================================
+# 4. Camera helpers
+# ===========================================================================
+
+def _get_table_top_z() -> float:
+    """Query the USD stage for the table prim's world bounding-box top."""
+    from pxr import UsdGeom, Usd
+    import omni.usd
+    stage = omni.usd.get_context().get_stage()
+    prim = stage.GetPrimAtPath("/World/envs/env_0/Static0")
+    bbox = UsdGeom.BBoxCache(Usd.TimeCode.Default(), ["default"]).ComputeWorldBound(prim)
+    return float(bbox.GetRange().GetMax()[2])
 
 
 # ===========================================================================
@@ -294,6 +314,13 @@ def main():
     )
     device = world.device
     DOF = world.num_dof
+
+    # Set viewer camera — z offsets are above the table surface queried from USD
+    if not headless:
+        table_top_z = _get_table_top_z()
+        lookat = (cfg.viewer_lookat[0], cfg.viewer_lookat[1], table_top_z + cfg.viewer_lookat[2])
+        eye    = (cfg.viewer_eye[0],    cfg.viewer_eye[1],    table_top_z + cfg.viewer_eye[2])
+        world.sim_context.set_camera_view(eye, lookat)
 
     # Keyboard goal control
     GoalController(world._goal, world._goal_lock)

@@ -302,9 +302,12 @@ class Objective:
                     step["end_pos"] = _bin_to_mppi_local(step["end_pos"])
                     if "start_pos" in step:
                         step["start_pos"] = _bin_to_mppi_local(step["start_pos"])
+            elif frame == "target":
+                self._target_frame_unresolved = True
+                print("[Objective] coordinate_frame=target — will resolve positions on first state call")
             obj_size = solution.get("env_config", {}).get("OBJ_SIZE", 0.05)
             self._obj_half_size = obj_size / 2
-        
+            self._costs["above_target"] = AboveObjectCost(obj_half_size=self._obj_half_size)
         self.current_step = 0
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True
@@ -343,6 +346,24 @@ class Objective:
         print("[Objective] Final object world poses:")
         for name, (idx, pos) in final_poses.items():
             print(f"  {name} (idx {idx}): {pos}")
+
+    def resolve_target_frame(self, target_pos_local: torch.Tensor) -> None:
+        """Resolve target-relative step positions to absolute MPC-local positions.
+
+        Called on the first compute_action_tensor tick that carries object states.
+        No-ops after the first successful resolution.
+        """
+        if not getattr(self, '_target_frame_unresolved', False):
+            return
+        t = target_pos_local.tolist()
+        for step in self.steps:
+            ep = step["end_pos"]
+            step["end_pos"] = [t[0] + ep[0], t[1] + ep[1], t[2] + ep[2]]
+            if "start_pos" in step:
+                sp = step["start_pos"]
+                step["start_pos"] = [t[0] + sp[0], t[1] + sp[1], t[2] + sp[2]]
+        self._target_frame_unresolved = False
+        print(f"[Objective] Resolved target-frame steps using target pos {t}")
 
     def _update_plot(self):
         for bar, label in zip(self._bars, self._labels):
