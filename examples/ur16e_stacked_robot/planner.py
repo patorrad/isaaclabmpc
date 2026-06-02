@@ -492,38 +492,6 @@ def main():
         block_positions = [_bin_to_mppi_local(p) for p in bin_positions]
 
     block_cfgs = make_block_cfgs(positions=block_positions)
-
-    # Build scenario_info dict for the get_scenario_info() RPC.
-    # Positions are stored in bin frame so pipeline.py can use them directly.
-    if block_positions is not None:
-        # Inverse of _bin_to_mppi_local: world=[y+0.35, x+0.075, z+1.225]
-        def _world_to_bin(wp):
-            return [wp[1] - 0.075, wp[0] - 0.35, wp[2] - 1.225]
-        bin_positions_info = [_world_to_bin(p) for p in block_positions]
-        _sc_bin_size       = float(sc.get("bin_size", 0.3))
-        _sc_wall_thickness = float(sc.get("wall_thickness", 0.02))
-        _sc_friction       = float(sc.get("friction", 0.2))
-    else:
-        bin_positions_info = [spec[0] for spec in _BIN_BLOCK_SPECS]
-        _sc_bin_size, _sc_wall_thickness, _sc_friction = 0.2, 0.02, 0.2
-    scenario_info = {
-        "initial_state": {
-            "target_pos":  bin_positions_info[0],
-            "target_quat": [1.0, 0.0, 0.0, 0.0],
-            "obstacles": [
-                {"pos": p, "quat": [1.0, 0.0, 0.0, 0.0]}
-                for p in bin_positions_info[1:]
-            ],
-        },
-        "env_config": {
-            "n_obstacles":    len(bin_positions_info) - 1,
-            "obj_size":       0.05,
-            "bin_size":       _sc_bin_size,
-            "wall_thickness": _sc_wall_thickness,
-            "friction":       _sc_friction,
-        },
-    }
-
     static_cfgs = make_static_cfgs(stand_urdf=cfg.stand_urdf)
     # static_cfgs[1] is the table: center Z + half-thickness = surface Z
     _table_cfg = static_cfgs[0]
@@ -559,7 +527,6 @@ def main():
         object_cfgs=block_cfgs,
         static_cfgs=static_cfgs,
         contact_sensor_cfgs=[robot_contact_sensor],
-        scenario_info=scenario_info,
     )
 
     server = zerorpc.Server(planner)

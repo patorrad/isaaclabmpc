@@ -61,19 +61,33 @@ class MPPIIsaacLabPlanner:
         Optional prior policy (currently unused, pass None).
     robot_cfg :
         ArticulationCfg for the robot (e.g. UR16E_CFG).
+    read_only :
+        If True, skip IsaacLabWrapper/MPPIPlanner creation and connect to a
+        running zerorpc planner server instead. All RPC methods proxy through.
+    server_addr :
+        zerorpc address to connect to when read_only=True.
     """
 
     def __init__(
         self,
-        cfg,
-        objective: Callable,
-        robot_cfg,
+        cfg=None,
+        objective: Callable = None,
+        robot_cfg=None,
         prior: Optional[Callable] = None,
         object_cfgs: Optional[list] = None,
         contact_sensor_cfgs: Optional[list] = None,
         static_cfgs: Optional[list] = None,
         scenario_info: dict = None,
+        read_only: bool = False,
+        server_addr: str = "tcp://localhost:4242",
     ):
+        if read_only:
+            import zerorpc as _zrpc
+            self._rpc = _zrpc.Client(timeout=30, heartbeat=None)
+            self._rpc.connect(server_addr)
+            self._read_only = True
+            return
+        self._read_only = False
         self.cfg = cfg
         self.objective = objective
         self._scenario_info = scenario_info or {}
@@ -307,8 +321,24 @@ class MPPIIsaacLabPlanner:
             goal = torch.zeros(3)
         return torch_to_bytes(goal)
 
+    def get_sim_object_poses(self) -> bytes:
+        """Object poses from the live simulation (env 0): flat [pos(3), quat(4), ...] bytes.
+
+        In read_only mode, proxies to the remote planner server.
+        In normal mode, reads directly from self.sim.
+        """
+        if getattr(self, '_read_only', False):
+            return self._rpc.get_sim_object_poses()
+        parts = []
+        for i in range(len(self.sim.objects)):
+            parts.append(self.sim.get_object_pos(i)[0].cpu())   # (3,) local frame
+            parts.append(self.sim.get_object_quat(i)[0].cpu())  # (4,) w,x,y,z
+        return torch_to_bytes(torch.cat(parts))
+
     def reset_episode(self, steps_json: str = ""):
         """Reset objective to step 0. Pass JSON-encoded steps to update goals."""
+        if getattr(self, '_read_only', False):
+            return self._rpc.reset_episode(steps_json)
         if hasattr(self.objective, "reset_episode"):
             import json as _json
             steps = _json.loads(steps_json) if steps_json else None
@@ -319,6 +349,8 @@ class MPPIIsaacLabPlanner:
 
     def test(self, msg: str):
         """Ping/echo for connection testing."""
+        if getattr(self, '_read_only', False):
+            return self._rpc.test(msg)
         print(f"[MPPIIsaacLabPlanner] test: {msg}")
 
     def get_scenario_info(self) -> str:
