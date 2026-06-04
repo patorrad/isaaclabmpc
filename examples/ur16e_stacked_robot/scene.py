@@ -27,7 +27,7 @@ def _bin_to_mppi_local(bin_pos: list) -> list:
     Matches puzzles/main.py:_bin_to_mppi_local() except for the Z offset.
     """
     x, y, z = bin_pos
-    return [y + 0.6, x - 0.10, z + 1.225]
+    return [y + 0.35, x + 0.075, z + 1.245]
 
 
 # Bin-frame source positions from ur16e_stand_blocks.yaml (bin_size=0.2).
@@ -36,7 +36,8 @@ _BIN_BLOCK_SPECS = [
     ([0.2297, 0.2127, 0.025], (0.9, 0.2, 0.2)),   # 0: target      red
     ([0.2374, 0.0825, 0.025], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
     ([0.0608, 0.0712, 0.025], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
-    # ([0.0765, 0.2095, 0.025], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
+    ([0.0765, 0.2095, 0.025], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
+    ([0.0765, 0.3095, 0.025], (0.9, 0.5, 0.2)),   # 4: obstacle_3  orange
 ]
 _BLOCK_SPECS = [(_bin_to_mppi_local(pos), color) for pos, color in _BIN_BLOCK_SPECS]
 
@@ -72,7 +73,7 @@ def make_static_cfgs(stand_urdf: str) -> list:
             physics_material=sim_utils.RigidBodyMaterialCfg(static_friction=0.2,
                                                             dynamic_friction=0.2),
         ),
-        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 1.19)), 
+        init_state=AssetBaseCfg.InitialStateCfg(pos=(0.65, 0.0, 1.159)), 
     )
 
     stand2_cfg = AssetBaseCfg(

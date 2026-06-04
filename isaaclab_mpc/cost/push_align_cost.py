@@ -39,5 +39,5 @@ class PushAlignCost(nn.Module):
                * torch.linalg.norm(b2g_2d, dim=1).clamp(min=1e-6))
         )
         align = cosine + 1.0  # shift to [0, 2]: 0 = ideal, 2 = worst
-        gate = torch.sigmoid((robot_to_obj_dist - self.align_gate_dist) / self.gate_width)
+        gate = 1.0#torch.sigmoid((robot_to_obj_dist - self.align_gate_dist) / self.gate_width)
         return align * gate

@@ -79,66 +79,60 @@ class MPPIIsaacLabPlanner:
         static_cfgs: Optional[list] = None,
         scenario_info: dict = None,
         read_only: bool = False,
-        server_addr: str = "tcp://localhost:4242",
     ):
-        if read_only:
-            import zerorpc as _zrpc
-            self._rpc = _zrpc.Client(timeout=30, heartbeat=None)
-            self._rpc.connect(server_addr)
-            self._read_only = True
-            return
-        self._read_only = False
-        self.cfg = cfg
-        self.objective = objective
-        self._scenario_info = scenario_info or {}
         self._latest_dof_state: Optional[bytes] = None
         self._latest_object_states: Optional[List] = None
-        self.num_envs = cfg.mppi.num_samples
-        self.device = cfg.mppi.device
+        if not read_only:
+            self._read_only = read_only
+            self.cfg = cfg
+            self.objective = objective
+            self._scenario_info = scenario_info or {}
+            self.num_envs = cfg.mppi.num_samples
+            self.device = cfg.mppi.device
 
-        # ------------------------------------------------------------------
-        # Isaac Lab parallel simulation
-        # ------------------------------------------------------------------
-        self.sim = IsaacLabWrapper(
-            cfg=IsaacLabConfig(
-                dt=cfg.isaaclab.dt,
-                device=cfg.mppi.device,
-                visualize_rollouts=cfg.isaaclab.visualize_rollouts,
-                render=cfg.isaaclab.render,
-            ),
-            robot_cfg=robot_cfg,
-            num_envs=cfg.mppi.num_samples,
-            ee_link_name=cfg.ee_link_name,
-            goal=cfg.goal,
-            env_spacing=getattr(cfg.isaaclab, "env_spacing", 1.5),
-            object_cfgs=object_cfgs,
-            contact_sensor_cfgs=contact_sensor_cfgs,
-            static_cfgs=static_cfgs,
-        )
+            # ------------------------------------------------------------------
+            # Isaac Lab parallel simulation
+            # ------------------------------------------------------------------
+            self.sim = IsaacLabWrapper(
+                cfg=IsaacLabConfig(
+                    dt=cfg.isaaclab.dt,
+                    device=cfg.mppi.device,
+                    visualize_rollouts=cfg.isaaclab.visualize_rollouts,
+                    render=cfg.isaaclab.render,
+                ),
+                robot_cfg=robot_cfg,
+                num_envs=cfg.mppi.num_samples,
+                ee_link_name=cfg.ee_link_name,
+                goal=cfg.goal,
+                env_spacing=getattr(cfg.isaaclab, "env_spacing", 1.5),
+                object_cfgs=object_cfgs,
+                contact_sensor_cfgs=contact_sensor_cfgs,
+                static_cfgs=static_cfgs,
+            )
 
-        # ------------------------------------------------------------------
-        # Prior (optional learned policy)
-        # ------------------------------------------------------------------
-        if prior is not None:
-            self.prior = lambda state, t: prior.compute_command(self.sim)
-        else:
-            self.prior = None
+            # ------------------------------------------------------------------
+            # Prior (optional learned policy)
+            # ------------------------------------------------------------------
+            if prior is not None:
+                self.prior = lambda state, t: prior.compute_command(self.sim)
+            else:
+                self.prior = None
 
-        # ------------------------------------------------------------------
-        # MPPI planner (from mppi_torch)
-        # ------------------------------------------------------------------
-        self.mppi = MPPIPlanner(
-            cfg.mppi,
-            cfg.nx,
-            dynamics=self._dynamics,
-            running_cost=self._running_cost,
-            prior=self.prior,
-        )
+            # ------------------------------------------------------------------
+            # MPPI planner (from mppi_torch)
+            # ------------------------------------------------------------------
+            self.mppi = MPPIPlanner(
+                cfg.mppi,
+                cfg.nx,
+                dynamics=self._dynamics,
+                running_cost=self._running_cost,
+                prior=self.prior,
+            )
 
-        # Placeholder state tensor (actual state lives in the simulator)
-        self._state_ph = torch.zeros(
-            (self.num_envs, cfg.nx), device=self.device
-        )
+            # Placeholder state tensor (actual state lives in the simulator)
+            self._state_ph = torch.zeros(
+                (self.num_envs, cfg.nx), device=self.device
+            )
 
         # Warm up: compile CUDA kernels and fill the GPU pipeline so the
         # first real call isn't slower than subsequent ones.
@@ -236,11 +230,11 @@ class MPPIIsaacLabPlanner:
         elif self._latest_object_states:
             object_states = self._latest_object_states
 
-        # Resolve target-relative step positions on the first call that has object states.
-        if object_states and hasattr(self.objective, 'resolve_target_frame'):
-            self.objective.resolve_target_frame(object_states[0][0])
-
-        self.sim.reset_to_state(q, dq, object_states=object_states if object_states else None)
+        if not self._read_only:
+            # Resolve target-relative step positions on the first call that has object states.
+            if object_states and hasattr(self.objective, 'resolve_target_frame'):
+                self.objective.resolve_target_frame(object_states[0][0])
+            self.sim.reset_to_state(q, dq, object_states=object_states if object_states else None)
 
         # for i in range(len(self.sim.objects)):
         #     print(f"[sim] obj {i}: pos={self.sim.get_object_pos(i)[0].tolist()}")
@@ -248,11 +242,12 @@ class MPPIIsaacLabPlanner:
         return self._command()
 
     def _command(self) -> bytes:
-        action = self.mppi.command(self._state_ph)
-        if hasattr(self.objective, "update_debug_plot"):
-            self.objective.update_debug_plot()
-        # torch.cuda.synchronize()
-        return torch_to_bytes(action)
+        if not self._read_only:
+            action = self.mppi.command(self._state_ph)
+            if hasattr(self.objective, "update_debug_plot"):
+                self.objective.update_debug_plot()
+            # torch.cuda.synchronize()
+            return torch_to_bytes(action)
 
     def get_robot_state(self) -> bytes:
         """Return the latest dof state received from the bridge."""
