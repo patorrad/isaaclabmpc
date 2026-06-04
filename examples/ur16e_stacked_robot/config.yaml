@@ -35,13 +35,13 @@ mppi:
   num_samples: 250
   horizon: 18
   device: "cuda:0"
-  u_min: [-0.12]
-  u_max: [0.12]
-  lambda_: 0.5
+  u_min: [-0.08]
+  u_max: [0.08]
+  lambda_: .05
   noise_sigma:
-    - [0.2, 0.0,  0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.2, 0.0,  0.0,  0.0,  0.0]
-    - [0.0,  0.0,  0.2, 0.0,  0.0,  0.0]
+    - [0.1, 0.0,  0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.1, 0.0,  0.0,  0.0,  0.0]
+    - [0.0,  0.0,  0.1, 0.0,  0.0,  0.0]
     - [0.0,  0.0,  0.0,  0.1, 0.0,  0.0]
     - [0.0,  0.0,  0.0,  0.0,  0.1, 0.0]
     - [0.0,  0.0,  0.0,  0.0,  0.0,  0.1]
@@ -71,27 +71,32 @@ viewer:
 
 costs:
   weights:
-    robot_to_obj:  30.0    # TCP distance to current block
-    obj_to_goal:  25.0    # block distance to its goal
+    robot_to_obj:  30.0    # TCP distance to current block (push mode only)
+    obj_to_goal:   30.0    # block distance to its goal   (push mode only)
     robot_ori:     30.0    # wrist polar tilt from straight-down (arccos)
-    height_match: 30.0    # TCP Z vs block Z
-    push_align:   30.0    # TCP behind block relative to push direction
-    collision:     0.0    # wrist contact force (Z component)
-    joint_vel:     3.0    # joint velocity magnitude
-    singularity:   0.05   # reciprocal manipulability (1/|det J|)
-    tcp_floor:     30.0   # penalty for TCP going below table surface + offset
-    above_target:   60.0   # penalty for TCP above target cube's rotated XY footprint
+    height_match:  40.0    # TCP Z vs block Z             (both modes)
+    push_align:    45.0    # TCP behind block relative to push direction (both modes)
+    collision:      0.0    # wrist contact force (Z component)
+    joint_vel:      3.0    # joint velocity magnitude
+    singularity:    0.00   # reciprocal manipulability (1/|det J|)
+    tcp_floor:     30.0    # penalty for TCP going below table surface + offset
+    above_target:   0.0    # replaced by obj_avoidance
+    obj_avoidance: 20.0    # 1/(d+eps) repulsion from all blocks (approach mode only)
+  approach_push_align_threshold:   .3  # push_align below this → "aligned"
+  approach_height_match_threshold: 0.02   # height_match below this → "at height"
+  obj_avoidance_dist_threshold:    0.1   # repulsion is zero beyond this distance (m)
   push_align_gate_width: 0.05   # sigmoid transition width (metres)
-  tcp_floor_offset: 0.01        # safety margin above table surface (metres)
+  tcp_floor_offset: 0.0075        # safety margin above table surface (metres)
   obj_half_size: 0.025
   gaussian_projection:
     enabled: true
-    robot_to_obj: {n: 2, c: 0.1, s: 0.0, r: 1.0e-5}
-    obj_to_goal:  {n: 2, c: 0.1, s: 0.0, r: 1.0e-5}
-    height_match: {n: 2, c: 0.1, s: 0.0, r: 1.0e-5}
-    robot_ori:    {n: 2, c: .5, s: 0.0, r: 1.0e-5}
-    joint_vel:    {n: 2, c: 1.0, s: 0.0, r: 1.0e-5}
-    push_align:   {n: 2, c: 1.0, s: 0.0, r: 1.0e-5}
-    collision:    {n: 2, c: 0.0, s: 0.0, r: 0.0}
-    singularity:  {n: 2, c: 0.0, s: 0.0, r: 0.0}
-    tcp_floor:    {n: 2, c: 0.025, s: 0.0, r: 1.0e-5}
+    robot_to_obj:  {n: 2, c: 0.0, s: 0.0, r: 1.0e-5}
+    obj_to_goal:   {n: 2, c: 0.0, s: 0.0, r: 1.0e-5}
+    height_match:  {n: 2, c: 0.0, s: 0.0, r: 1.0e-5}
+    robot_ori:     {n: 2, c: .5,  s: 0.0, r: 1.0e-5}
+    joint_vel:     {n: 2, c: 1.0, s: 0.0, r: 1.0e-5}
+    push_align:    {n: 2, c: 1.0, s: 0.0, r: 1.0e-5}
+    collision:     {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    singularity:   {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    tcp_floor:     {n: 2, c: 0.025, s: 0.0, r: 1.0e-5}
+    obj_avoidance: {n: 2, c: 0.0, s: 0.0, r: 0.0}

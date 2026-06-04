@@ -48,6 +48,7 @@ import sys
 import torch
 import yaml
 import zerorpc
+import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -80,16 +81,17 @@ from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs
 
 @dataclass
 class CostWeights:
-    robot_to_obj: float = 5.0
-    obj_to_goal:  float = 25.0
-    robot_ori:    float = 3.0
-    height_match: float = 20.0
-    push_align:   float = 45.0
-    collision:    float = 2.0
-    joint_vel:    float = 3.0
-    singularity:  float = 0.05
-    tcp_floor:    float = 30.0
-    above_target: float = 0.0
+    robot_to_obj:  float = 0.
+    obj_to_goal:   float = 0.0
+    robot_ori:     float = 0.
+    height_match:  float = 0.0
+    push_align:    float = 0.0
+    collision:     float = 0.
+    joint_vel:     float = 0.
+    singularity:   float = 0.0
+    tcp_floor:     float = 0.0
+    above_target:  float = 0.
+    obj_avoidance: float = 0.0  # inverse-distance repulsion from all blocks (approach mode)
 
 
 @dataclass
@@ -109,16 +111,17 @@ class GaussianProjectionConfig:
     n=1 → f(0)=2, f(∞)=1: bump semantics (penalise proximity to a point).
     """
     enabled:      bool               = False
-    robot_to_obj: GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.5, r=1e-5))
-    obj_to_goal:  GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.5, r=1e-5))
-    height_match: GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.3, r=1e-5))
-    robot_ori:    GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=1.0, r=1e-5))
-    joint_vel:    GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=1.0, r=1e-5))
-    push_align:   GaussianProjParams = field(default_factory=GaussianProjParams)
-    collision:    GaussianProjParams = field(default_factory=GaussianProjParams)
-    singularity:  GaussianProjParams = field(default_factory=GaussianProjParams)
-    tcp_floor:    GaussianProjParams = field(default_factory=GaussianProjParams)
-    above_target: GaussianProjParams = field(default_factory=GaussianProjParams)
+    robot_to_obj: GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.0, r=1e-5))
+    obj_to_goal:  GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.0, r=1e-5))
+    height_match: GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.0, r=1e-5))
+    robot_ori:    GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.0, r=1e-5))
+    joint_vel:    GaussianProjParams = field(default_factory=lambda: GaussianProjParams(n=2, c=0.0, r=1e-5))
+    push_align:    GaussianProjParams = field(default_factory=GaussianProjParams)
+    collision:     GaussianProjParams = field(default_factory=GaussianProjParams)
+    singularity:   GaussianProjParams = field(default_factory=GaussianProjParams)
+    tcp_floor:     GaussianProjParams = field(default_factory=GaussianProjParams)
+    above_target:  GaussianProjParams = field(default_factory=GaussianProjParams)
+    obj_avoidance: GaussianProjParams = field(default_factory=GaussianProjParams)
 
 
 @dataclass
@@ -128,6 +131,10 @@ class CostConfig:
     tcp_floor_offset: float = 0.05
     obj_half_size: float = 0.025
     gaussian_projection: GaussianProjectionConfig = field(default_factory=GaussianProjectionConfig)
+    approach_push_align_threshold:   float = 0.3   # push_align below this → "aligned enough"
+    approach_height_match_threshold: float = 0.05  # height_match below this → "at height"
+    obj_avoidance_eps:               float = 0.1   # epsilon in 1/(d + eps) repulsion
+    obj_avoidance_dist_threshold:    float = 0.3   # repulsion is zero beyond this distance (m)
 
 
 @dataclass
@@ -171,6 +178,7 @@ def _load_config(yaml_path: str) -> PlannerConfig:
 
     if "mppi" in raw:
         cfg.mppi = MPPIConfig(**{k: v for k, v in raw["mppi"].items()})
+    print(cfg.mppi)
 
     if "isaaclab" in raw:
         il = raw["isaaclab"]
@@ -194,7 +202,8 @@ def _load_config(yaml_path: str) -> PlannerConfig:
             gp = GaussianProjectionConfig()
             gp.enabled = bool(gp_raw.get("enabled", False))
             _cost_keys = ["robot_to_obj", "obj_to_goal", "robot_ori", "height_match",
-                          "push_align", "joint_vel", "collision", "singularity", "tcp_floor"]
+                          "push_align", "joint_vel", "collision", "singularity", "tcp_floor",
+                          "above_target", "obj_avoidance"]
             for key in _cost_keys:
                 if key in gp_raw:
                     p = gp_raw[key]
@@ -205,6 +214,14 @@ def _load_config(yaml_path: str) -> PlannerConfig:
                         r=float(p.get("r", 0.0)),
                     ))
             cfg.costs.gaussian_projection = gp
+        if "approach_push_align_threshold" in c:
+            cfg.costs.approach_push_align_threshold = float(c["approach_push_align_threshold"])
+        if "approach_height_match_threshold" in c:
+            cfg.costs.approach_height_match_threshold = float(c["approach_height_match_threshold"])
+        if "obj_avoidance_eps" in c:
+            cfg.costs.obj_avoidance_eps = float(c["obj_avoidance_eps"])
+        if "obj_avoidance_dist_threshold" in c:
+            cfg.costs.obj_avoidance_dist_threshold = float(c["obj_avoidance_dist_threshold"])
 
     return cfg
 
@@ -237,17 +254,22 @@ class Objective:
     def __init__(self, cfg: PlannerConfig, table_surface_z: float = 0.0, steps_override: list | None = None):
         w = cfg.costs.weights
         self.weights = {
-            "robot_to_obj": w.robot_to_obj,
-            "obj_to_goal":  w.obj_to_goal,
-            "robot_ori":    w.robot_ori,
-            "height_match": w.height_match,
-            "push_align":   w.push_align,
-            "collision":    w.collision,
-            "joint_vel":    w.joint_vel,
-            "singularity":  w.singularity,
-            "tcp_floor":    w.tcp_floor,
-            "above_target": w.above_target,
+            "robot_to_obj":  w.robot_to_obj,
+            "obj_to_goal":   w.obj_to_goal,
+            "robot_ori":     w.robot_ori,
+            "height_match":  w.height_match,
+            "push_align":    w.push_align,
+            "collision":     w.collision,
+            "joint_vel":     w.joint_vel,
+            "singularity":   w.singularity,
+            "tcp_floor":     w.tcp_floor,
+            "above_target":  w.above_target,
+            "obj_avoidance": w.obj_avoidance,
         }
+        self._approach_pa_threshold    = cfg.costs.approach_push_align_threshold
+        self._approach_hm_threshold    = cfg.costs.approach_height_match_threshold
+        self._obj_avoidance_eps        = cfg.costs.obj_avoidance_eps
+        self._obj_avoidance_dist_thr   = cfg.costs.obj_avoidance_dist_threshold
         self._costs = {
             "robot_to_obj": DistCost(),
             "obj_to_goal":  DistCost(),
@@ -311,6 +333,7 @@ class Objective:
         self.current_step = 0
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True
+        self._is_push_mode = False   # locked for full rollout, re-evaluated each planning cycle
         self._printed_initial_poses = False
 
         self._labels = list(self.weights.keys())
@@ -319,15 +342,36 @@ class Objective:
 
         plt.ion()
         colors = ["steelblue", "tomato", "forestgreen", "goldenrod",
-                  "mediumpurple", "darkorange", "teal", "sienna", "crimson", "darkviolet"]
+                  "mediumpurple", "darkorange", "teal", "sienna", "crimson", "darkviolet",
+                  "olivedrab"]
         self._fig, self._ax = plt.subplots(figsize=(8, 4))
         self._fig.suptitle("Avg weighted cost per component (across trajectories)")
         self._bars = self._ax.bar(self._labels, [0.0] * len(self._labels),
                                   color=colors[:len(self._labels)])
         self._ax.set_ylabel("Avg weighted cost")
-        self._ax.set_ylim(0, 5)
+        self._ax.set_ylim(0, 20)
         plt.tight_layout()
         plt.show()
+
+        self._last_total_costs: np.ndarray | None = None
+        self._SPEC_BINS    = 60
+        self._SPEC_MAX     = 30.0
+        self._SPEC_HISTORY = 200
+        self._cost_spec    = np.zeros((self._SPEC_BINS, self._SPEC_HISTORY))
+
+        self._fig2, self._ax2 = plt.subplots(figsize=(10, 4))
+        self._fig2.suptitle("Rollout cost distribution over time")
+        self._im_spec = self._ax2.imshow(
+            self._cost_spec, aspect="auto", origin="lower",
+            cmap="inferno", interpolation="nearest",
+            vmin=0, vmax=1,
+            extent=[0, self._SPEC_HISTORY, 0, self._SPEC_MAX],
+        )
+        self._ax2.set_ylabel("Total rollout cost")
+        self._ax2.set_xlabel("MPC step  (← older  |  newer →)")
+        self._fig2.colorbar(self._im_spec, ax=self._ax2, label="Fraction of rollouts")
+        self._fig2.tight_layout()
+        self._fig2.show()
 
         try:
             from isaacsim.util.debug_draw import _debug_draw
@@ -370,6 +414,16 @@ class Objective:
             bar.set_height(self._cost_avg[label])
         self._fig.canvas.draw_idle()
         self._fig.canvas.flush_events()
+
+        if self._last_total_costs is not None:
+            hist, _ = np.histogram(self._last_total_costs,
+                                   bins=self._SPEC_BINS,
+                                   range=(0, self._SPEC_MAX))
+            self._cost_spec = np.roll(self._cost_spec, -1, axis=1)
+            self._cost_spec[:, -1] = hist / hist.sum()
+            self._im_spec.set_data(self._cost_spec)
+            self._fig2.canvas.draw_idle()
+            self._fig2.canvas.flush_events()
 
     def reset(self):
         """Advance to next step if current block reached its goal."""
@@ -423,31 +477,39 @@ class Objective:
         # Cache real object position (env 0) for step-advance check in reset()
         if self._first_call:
             self._last_obj_pos = obj_pos[0].detach().clone()
+            # Lock mode for the entire rollout based on the actual current state (env 0).
+            r2o0 = tcp_pos[0:1] - obj_pos[0:1]
+            o2g0 = goal_pos.unsqueeze(0) - obj_pos[0:1]
+            d0   = self._costs["robot_to_obj"](r2o0)
+            hm0  = self._costs["height_match"](tcp_pos[0:1, 2], obj_pos[0:1, 2]).item()
+            pa0  = self._costs["push_align"](r2o0, o2g0, d0).item()
+            self._is_push_mode = (pa0 < self._approach_pa_threshold) \
+                               and (hm0 < self._approach_hm_threshold)
             self._first_call = False
 
         robot_to_obj = tcp_pos - obj_pos                 # (num_envs, 3)
         obj_to_goal  = goal_pos.unsqueeze(0) - obj_pos  # (num_envs, 3)
 
-        # robot_to_obj_dist is shared by robot_to_obj and push_align
-        _need_dist = ("robot_to_obj" in self._active_costs or "push_align" in self._active_costs)
-        robot_to_obj_dist = self._costs["robot_to_obj"](robot_to_obj) if _need_dist else None
+        robot_to_obj_dist = self._costs["robot_to_obj"](robot_to_obj)  # (B,) always needed
+
+        # ── Mode locked for full rollout horizon ──────────────────────────────
+        # Compute push_align and height_match unconditionally — shared cost terms.
+        height_match_raw = self._costs["height_match"](tcp_pos[:, 2], obj_pos[:, 2])   # (B,)
+        push_align_raw   = self._costs["push_align"](robot_to_obj, obj_to_goal, robot_to_obj_dist)  # (B,)
+
+        is_push = torch.full((tcp_pos.shape[0],), self._is_push_mode,
+                             dtype=torch.bool, device=device)
 
         raw = {}
-        
-        if "obj_to_goal" in self._active_costs:
-            raw["obj_to_goal"] = self._costs["obj_to_goal"](obj_to_goal)
+
+        # ── Shared costs (both modes) ─────────────────────────────────────────
+        raw["height_match"] = height_match_raw
+        raw["push_align"]   = push_align_raw
         if "robot_ori" in self._active_costs:
             raw["robot_ori"] = self._costs["robot_ori"](ee_quat)
-        if "height_match" in self._active_costs:
-            raw["height_match"] = self._costs["height_match"](tcp_pos[:, 2], obj_pos[:, 2])
-        if "push_align" in self._active_costs:
-            raw["push_align"] = self._costs["push_align"](robot_to_obj, obj_to_goal, robot_to_obj_dist)
-        if "robot_to_obj" in self._active_costs:
-            raw["robot_to_obj"] = robot_to_obj_dist
-            raw["robot_to_obj"][raw["push_align"] > .1] = 1/(raw["robot_to_obj"][raw["push_align"] > .1]+.25+.000001)
         if "collision" in self._active_costs:
             raw["collision"] = self._costs["collision"](
-                sim.get_contact_forces(0)                        # (num_envs, 1, 3) net
+                sim.get_contact_forces(0)
             )
         if "joint_vel" in self._active_costs:
             raw["joint_vel"] = self._costs["joint_vel"](sim.get_joint_vel())
@@ -455,14 +517,25 @@ class Objective:
             raw["singularity"] = self._costs["singularity"](sim.get_ee_jacobian())
         if "tcp_floor" in self._active_costs:
             raw["tcp_floor"] = self._costs["tcp_floor"](tcp_pos[:, 2])
-        if "above_target" in self._active_costs:
-            raw["above_target"] = 0.0
+
+        # ── Push-mode-only costs (zeroed in approach mode) ────────────────────
+        if "robot_to_obj" in self._active_costs:
+            raw["robot_to_obj"] = robot_to_obj_dist
+        if "obj_to_goal" in self._active_costs:
+            otg = self._costs["obj_to_goal"](obj_to_goal)
+            raw["obj_to_goal"] = torch.where(is_push, otg, torch.zeros_like(otg))
+
+        # ── Approach-mode-only costs (zeroed in push mode) ───────────────────
+        if "obj_avoidance" in self._active_costs:
+            avoid = torch.zeros(tcp_pos.shape[0], device=device)
             block_pos0 = []
             for i in range(len(_BLOCK_SPECS)):
-                target_pos  = sim.get_object_pos(i)  # (B, 3)
-                target_quat = sim.get_object_quat(i)  # (B, 4) wxyz
-                raw["above_target"] += self._costs["above_target"](tcp_pos, target_pos, target_quat)
-                block_pos0.append(target_pos[0].detach().cpu())
+                blk_pos = sim.get_object_pos(i)  # (B, 3)
+                block_pos0.append(blk_pos[0].detach().cpu())
+                d = torch.linalg.norm(tcp_pos - blk_pos, dim=1)
+                alpha = torch.clamp(1.0 - d / self._obj_avoidance_dist_thr, min=0.0)
+                avoid += alpha ** 2
+            raw["obj_avoidance"] = torch.where(is_push, torch.zeros_like(avoid), avoid)
 
             if self._draw is not None:
                 origin = sim.scene.env_origins[0].cpu()
@@ -471,6 +544,15 @@ class Objective:
                 self._draw.draw_points([tp], [(0.0, 0.6, 1.0, 1.0)], [12.0])
                 bps = [tuple((bp + origin).tolist()) for bp in block_pos0]
                 self._draw.draw_points(bps, [(1.0, 0.2, 0.2, 1.0)] * len(bps), [10.0] * len(bps))
+        elif "above_target" in self._active_costs:
+            # fallback: above_target still works if obj_avoidance weight is 0
+            raw["above_target"] = torch.zeros(tcp_pos.shape[0], device=device)
+            for i in range(len(_BLOCK_SPECS)):
+                target_pos  = sim.get_object_pos(i)
+                target_quat = sim.get_object_quat(i)
+                raw["above_target"] += self._costs["above_target"](tcp_pos, target_pos, target_quat)
+            raw["above_target"] = torch.where(is_push, torch.zeros_like(raw["above_target"]),
+                                              raw["above_target"])
 
         for t in raw.values():
             t[torch.isnan(t)] = 100.0
@@ -480,6 +562,8 @@ class Objective:
                 raw[k] = proj(raw[k])
 
         weighted = {k: self.weights[k] * v for k, v in raw.items()}
+        total = sum(weighted.values())   # (num_envs,)
+        self._last_total_costs = total.detach().cpu().numpy()
 
         for k, v in weighted.items():
             self._cost_avg[k] = ((1 - self._EMA_ALPHA) * self._cost_avg[k]
@@ -489,7 +573,7 @@ class Objective:
         if self._call_count % self._PLOT_INTERVAL == 0:
             self._update_plot()
 
-        return sum(weighted.values())
+        return total
 
 
 # ===========================================================================
