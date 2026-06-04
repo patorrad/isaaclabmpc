@@ -429,8 +429,8 @@ class Objective:
         """Advance to next step if current block reached its goal."""
         if self._last_obj_pos is not None and self.current_step < len(self.steps):
             step = self.steps[self.current_step]
-            goal = torch.tensor(step["end_pos"], dtype=torch.float32)
-            dist = torch.linalg.norm(self._last_obj_pos.cpu() - goal).item()
+            goal = torch.tensor(step["end_pos"][:2], dtype=torch.float32)
+            dist = torch.linalg.norm(self._last_obj_pos.cpu()[:2] - goal).item()
             if dist < self.step_threshold:
                 print(self.current_step, step, goal, dist)
                 self.current_step += 1
