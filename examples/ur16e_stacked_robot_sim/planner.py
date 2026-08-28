@@ -34,7 +34,7 @@ parser.add_argument("--defer_solution", action="store_true",
                     help="Start without a solution; receive steps via reset_episode() RPC.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
-args_cli.headless = False          # planner always runs headless
+args_cli.headless = True          # planner always runs headless
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -72,7 +72,7 @@ from isaaclab_mpc.cost import (
 )
 from isaaclab_mpc.cost.utils import quat_apply
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
-from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local, _BLOCK_SPECS
+from examples.ur16e_stacked_robot_sim.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local, _BLOCK_SPECS
 
 
 # ===========================================================================
@@ -81,17 +81,18 @@ from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs
 
 @dataclass
 class CostWeights:
-    robot_to_obj:  float = 0.
-    obj_to_goal:   float = 0.0
-    robot_ori:     float = 0.
-    height_match:  float = 0.0
-    push_align:    float = 0.0
-    collision:     float = 0.
-    joint_vel:     float = 0.
-    singularity:   float = 0.0
-    tcp_floor:     float = 0.0
-    above_target:  float = 0.
-    obj_avoidance: float = 0.0  # inverse-distance repulsion from all blocks (approach mode)
+    robot_to_obj:     float = 0.
+    obj_to_goal:      float = 0.0
+    robot_ori:        float = 0.
+    height_match:     float = 0.0
+    push_align:       float = 0.0
+    collision:        float = 0.
+    joint_vel:        float = 0.
+    singularity:      float = 0.0
+    tcp_floor:        float = 0.0
+    above_target:     float = 0.
+    obj_avoidance:    float = 0.0  # inverse-distance repulsion from all blocks (approach mode)
+    intruder_penalty: float = 0.0  # penalty for non-target blocks near the bin exit
 
 
 @dataclass
@@ -120,8 +121,9 @@ class GaussianProjectionConfig:
     collision:     GaussianProjParams = field(default_factory=GaussianProjParams)
     singularity:   GaussianProjParams = field(default_factory=GaussianProjParams)
     tcp_floor:     GaussianProjParams = field(default_factory=GaussianProjParams)
-    above_target:  GaussianProjParams = field(default_factory=GaussianProjParams)
-    obj_avoidance: GaussianProjParams = field(default_factory=GaussianProjParams)
+    above_target:     GaussianProjParams = field(default_factory=GaussianProjParams)
+    obj_avoidance:    GaussianProjParams = field(default_factory=GaussianProjParams)
+    intruder_penalty: GaussianProjParams = field(default_factory=GaussianProjParams)
 
 
 @dataclass
@@ -135,6 +137,8 @@ class CostConfig:
     approach_height_match_threshold: float = 0.05  # height_match below this → "at height"
     obj_avoidance_eps:               float = 0.1   # epsilon in 1/(d + eps) repulsion
     obj_avoidance_dist_threshold:    float = 0.3   # repulsion is zero beyond this distance (m)
+    intruder_exit_x:                 float = 0.35  # MPPI x of bin exit boundary
+    intruder_danger_margin:          float = 0.10  # ramp starts this far inside the exit (m)
 
 
 @dataclass
@@ -159,6 +163,7 @@ class PlannerConfig:
     mppi: MPPIConfig = field(default_factory=MPPIConfig)
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     costs: CostConfig = field(default_factory=CostConfig)
+    plot_costs: bool = False
 
 
 def _load_config(yaml_path: str) -> PlannerConfig:
@@ -203,7 +208,7 @@ def _load_config(yaml_path: str) -> PlannerConfig:
             gp.enabled = bool(gp_raw.get("enabled", False))
             _cost_keys = ["robot_to_obj", "obj_to_goal", "robot_ori", "height_match",
                           "push_align", "joint_vel", "collision", "singularity", "tcp_floor",
-                          "above_target", "obj_avoidance"]
+                          "above_target", "obj_avoidance", "intruder_penalty"]
             for key in _cost_keys:
                 if key in gp_raw:
                     p = gp_raw[key]
@@ -222,7 +227,12 @@ def _load_config(yaml_path: str) -> PlannerConfig:
             cfg.costs.obj_avoidance_eps = float(c["obj_avoidance_eps"])
         if "obj_avoidance_dist_threshold" in c:
             cfg.costs.obj_avoidance_dist_threshold = float(c["obj_avoidance_dist_threshold"])
+        if "intruder_exit_x" in c:
+            cfg.costs.intruder_exit_x = float(c["intruder_exit_x"])
+        if "intruder_danger_margin" in c:
+            cfg.costs.intruder_danger_margin = float(c["intruder_danger_margin"])
 
+    cfg.plot_costs = bool(raw.get("plot_costs", False))
     return cfg
 
 
@@ -251,7 +261,8 @@ class Objective:
     _PLOT_INTERVAL = 50
     _EMA_ALPHA     = 0.05
 
-    def __init__(self, cfg: PlannerConfig, table_surface_z: float = 0.0, steps_override: list | None = None):
+    def __init__(self, cfg: PlannerConfig, table_surface_z: float = 0.0, steps_override: list | None = None,
+                 n_blocks: int | None = None, plot_costs: bool = False):
         w = cfg.costs.weights
         self.weights = {
             "robot_to_obj":  w.robot_to_obj,
@@ -264,12 +275,16 @@ class Objective:
             "singularity":   w.singularity,
             "tcp_floor":     w.tcp_floor,
             "above_target":  w.above_target,
-            "obj_avoidance": w.obj_avoidance,
+            "obj_avoidance":    w.obj_avoidance,
+            "intruder_penalty": w.intruder_penalty,
         }
+        self._n_blocks = n_blocks if n_blocks is not None else len(_BLOCK_SPECS)
         self._approach_pa_threshold    = cfg.costs.approach_push_align_threshold
         self._approach_hm_threshold    = cfg.costs.approach_height_match_threshold
         self._obj_avoidance_eps        = cfg.costs.obj_avoidance_eps
         self._obj_avoidance_dist_thr   = cfg.costs.obj_avoidance_dist_threshold
+        self._intruder_exit_x          = cfg.costs.intruder_exit_x
+        self._intruder_danger_margin   = cfg.costs.intruder_danger_margin
         self._costs = {
             "robot_to_obj": DistCost(),
             "obj_to_goal":  DistCost(),
@@ -335,43 +350,46 @@ class Objective:
         self._first_call = True
         self._is_push_mode = False   # locked for full rollout, re-evaluated each planning cycle
         self._printed_initial_poses = False
+        self._goal_offset = torch.zeros(3)  # temporary offset applied to goal (recovery mode)
 
         self._labels = list(self.weights.keys())
         self._cost_avg = {k: 0.0 for k in self._labels}
         self._call_count = 0
 
-        # plt.ion()
-        # colors = ["steelblue", "tomato", "forestgreen", "goldenrod",
-        #           "mediumpurple", "darkorange", "teal", "sienna", "crimson", "darkviolet",
-        #           "olivedrab"]
-        # self._fig, self._ax = plt.subplots(figsize=(8, 4))
-        # self._fig.suptitle("Avg weighted cost per component (across trajectories)")
-        # self._bars = self._ax.bar(self._labels, [0.0] * len(self._labels),
-        #                           color=colors[:len(self._labels)])
-        # self._ax.set_ylabel("Avg weighted cost")
-        # self._ax.set_ylim(0, 20)
-        # plt.tight_layout()
-        # plt.show()
+        self._plot_enabled = plot_costs
+        if self._plot_enabled:
+            plt.ion()
+            colors = ["steelblue", "tomato", "forestgreen", "goldenrod",
+                      "mediumpurple", "darkorange", "teal", "sienna", "crimson", "darkviolet",
+                      "olivedrab"]
+            self._fig, self._ax = plt.subplots(figsize=(8, 4))
+            self._fig.suptitle("Avg weighted cost per component (across trajectories)")
+            self._bars = self._ax.bar(self._labels, [0.0] * len(self._labels),
+                                      color=colors[:len(self._labels)])
+            self._ax.set_ylabel("Avg weighted cost")
+            self._ax.set_ylim(0, 20)
+            plt.tight_layout()
+            plt.show()
 
-        # self._last_total_costs: np.ndarray | None = None
-        # self._SPEC_BINS    = 60
-        # self._SPEC_MAX     = 30.0
-        # self._SPEC_HISTORY = 200
-        # self._cost_spec    = np.zeros((self._SPEC_BINS, self._SPEC_HISTORY))
+            # self._last_total_costs: np.ndarray | None = None
+            # self._SPEC_BINS    = 60
+            # self._SPEC_MAX     = 30.0
+            # self._SPEC_HISTORY = 200
+            # self._cost_spec    = np.zeros((self._SPEC_BINS, self._SPEC_HISTORY))
 
-        # self._fig2, self._ax2 = plt.subplots(figsize=(10, 4))
-        # self._fig2.suptitle("Rollout cost distribution over time")
-        # self._im_spec = self._ax2.imshow(
-        #     self._cost_spec, aspect="auto", origin="lower",
-        #     cmap="inferno", interpolation="nearest",
-        #     vmin=0, vmax=1,
-        #     extent=[0, self._SPEC_HISTORY, 0, self._SPEC_MAX],
-        # )
-        # self._ax2.set_ylabel("Total rollout cost")
-        # self._ax2.set_xlabel("MPC step  (← older  |  newer →)")
-        # self._fig2.colorbar(self._im_spec, ax=self._ax2, label="Fraction of rollouts")
-        # self._fig2.tight_layout()
-        # self._fig2.show()
+            # self._fig2, self._ax2 = plt.subplots(figsize=(10, 4))
+            # self._fig2.suptitle("Rollout cost distribution over time")
+            # self._im_spec = self._ax2.imshow(
+            #     self._cost_spec, aspect="auto", origin="lower",
+            #     cmap="inferno", interpolation="nearest",
+            #     vmin=0, vmax=1,
+            #     extent=[0, self._SPEC_HISTORY, 0, self._SPEC_MAX],
+            # )
+            # self._ax2.set_ylabel("Total rollout cost")
+            # self._ax2.set_xlabel("MPC step  (← older  |  newer →)")
+            # self._fig2.colorbar(self._im_spec, ax=self._ax2, label="Fraction of rollouts")
+            # self._fig2.tight_layout()
+            # self._fig2.show()
 
         try:
             from isaacsim.util.debug_draw import _debug_draw
@@ -410,36 +428,43 @@ class Objective:
         print(f"[Objective] Resolved target-frame steps using target pos {t}")
 
     def _update_plot(self):
+        if not self._plot_enabled:
+            return
         for bar, label in zip(self._bars, self._labels):
             bar.set_height(self._cost_avg[label])
         self._fig.canvas.draw_idle()
         self._fig.canvas.flush_events()
 
-        if self._last_total_costs is not None:
-            hist, _ = np.histogram(self._last_total_costs,
-                                   bins=self._SPEC_BINS,
-                                   range=(0, self._SPEC_MAX))
-            self._cost_spec = np.roll(self._cost_spec, -1, axis=1)
-            self._cost_spec[:, -1] = hist / hist.sum()
-            self._im_spec.set_data(self._cost_spec)
-            self._fig2.canvas.draw_idle()
-            self._fig2.canvas.flush_events()
+        # if self._last_total_costs is not None:
+        #     hist, _ = np.histogram(self._last_total_costs,
+        #                            bins=self._SPEC_BINS,
+        #                            range=(0, self._SPEC_MAX))
+        #     self._cost_spec = np.roll(self._cost_spec, -1, axis=1)
+        #     self._cost_spec[:, -1] = hist / hist.sum()
+        #     self._im_spec.set_data(self._cost_spec)
+        #     self._fig2.canvas.draw_idle()
+        #     self._fig2.canvas.flush_events()
 
     def reset(self):
         """Advance to next step if current block reached its goal."""
         if self._last_obj_pos is not None and self.current_step < len(self.steps):
             step = self.steps[self.current_step]
-            goal = torch.tensor(step["end_pos"][:2], dtype=torch.float32)
-            dist = torch.linalg.norm(self._last_obj_pos.cpu()[:2] - goal).item()
-            if dist < self.step_threshold:
-                print(self.current_step, step, goal, dist)
-                self.current_step += 1
-                if self.current_step < len(self.steps):
-                    ns = self.steps[self.current_step]
-                    print(f"\n[Step {self.current_step}/{len(self.steps)}] "
-                          f"now pushing {ns['obj_name']} → {ns['end_pos']}")
-                else:
-                    print(f"\n[Step] All {len(self.steps)} steps completed!")
+            is_last = (self.current_step == len(self.steps) - 1)
+            if not is_last:
+                # Last step uses exit-line cost; world.py ends the episode via
+                # _target_exited — don't advance here or the planner switches to
+                # joint-vel-only mode and stops the robot too early.
+                goal = torch.tensor(step["end_pos"][:2], dtype=torch.float32)
+                dist = torch.linalg.norm(self._last_obj_pos.cpu()[:2] - goal).item()
+                if dist < self.step_threshold:
+                    print(self.current_step, step, goal, dist)
+                    self.current_step += 1
+                    if self.current_step < len(self.steps):
+                        ns = self.steps[self.current_step]
+                        print(f"\n[Step {self.current_step}/{len(self.steps)}] "
+                              f"now pushing {ns['obj_name']} → {ns['end_pos']}")
+                    else:
+                        print(f"\n[Step] All {len(self.steps)} steps completed!")
         self._first_call = True
 
     def reset_episode(self, steps: list | None = None):
@@ -469,7 +494,8 @@ class Objective:
 
         step = self.steps[self.current_step]
         obj_idx  = step["obj_idx"]
-        goal_pos = torch.tensor(step["end_pos"], dtype=torch.float32, device=device)
+        goal_pos = torch.tensor(step["end_pos"], dtype=torch.float32, device=device) \
+                   + self._goal_offset.to(device)
         sim.set_goal(goal_pos)
 
         obj_pos = sim.get_object_pos(obj_idx)  # (num_envs, 3)
@@ -490,12 +516,22 @@ class Objective:
         robot_to_obj = tcp_pos - obj_pos                 # (num_envs, 3)
         obj_to_goal  = goal_pos.unsqueeze(0) - obj_pos  # (num_envs, 3)
 
+        is_last_step = (self.current_step == len(self.steps) - 1)
+
         robot_to_obj_dist = self._costs["robot_to_obj"](robot_to_obj)  # (B,) always needed
 
         # ── Mode locked for full rollout horizon ──────────────────────────────
         # Compute push_align and height_match unconditionally — shared cost terms.
         height_match_raw = self._costs["height_match"](tcp_pos[:, 2], obj_pos[:, 2])   # (B,)
-        push_align_raw   = self._costs["push_align"](robot_to_obj, obj_to_goal, robot_to_obj_dist)  # (B,)
+        if is_last_step and torch.linalg.norm(self._goal_offset).item() < 0.05:
+            # Exit step, no recovery offset: align to push toward −X (bin exit).
+            _exit_dir = torch.zeros_like(obj_to_goal)
+            _exit_dir[:, 0] = -1.0
+            push_align_raw = self._costs["push_align"](robot_to_obj, _exit_dir, robot_to_obj_dist)
+        else:
+            # Normal step, or last step in recovery: use offset-shifted obj_to_goal
+            # so the face-change recovery can actually reorient the approach.
+            push_align_raw = self._costs["push_align"](robot_to_obj, obj_to_goal, robot_to_obj_dist)
 
         is_push = torch.full((tcp_pos.shape[0],), self._is_push_mode,
                              dtype=torch.bool, device=device)
@@ -521,15 +557,23 @@ class Objective:
         # ── Push-mode-only costs (zeroed in approach mode) ────────────────────
         if "robot_to_obj" in self._active_costs:
             raw["robot_to_obj"] = robot_to_obj_dist
+        _in_recovery = torch.linalg.norm(self._goal_offset).item() > 0.05
         if "obj_to_goal" in self._active_costs:
-            otg = self._costs["obj_to_goal"](obj_to_goal)
-            raw["obj_to_goal"] = torch.where(is_push, otg, torch.zeros_like(otg))
+            if is_last_step and not _in_recovery:
+                # Normal exit mode: drive block past the exit line.
+                exit_dist = torch.clamp(obj_pos[:, 0] - (self._intruder_exit_x - 0.08), min=0.0)
+                raw["obj_to_goal"] = torch.where(is_push, exit_dist, torch.zeros_like(exit_dist))
+            else:
+                # Non-last step, or last step in recovery: use full vector distance
+                # so obj_to_goal and push_align both point the same recovery direction.
+                otg = self._costs["obj_to_goal"](obj_to_goal)
+                raw["obj_to_goal"] = torch.where(is_push, otg, torch.zeros_like(otg))
 
         # ── Approach-mode-only costs (zeroed in push mode) ───────────────────
         if "obj_avoidance" in self._active_costs:
             avoid = torch.zeros(tcp_pos.shape[0], device=device)
             block_pos0 = []
-            for i in range(len(_BLOCK_SPECS)):
+            for i in range(self._n_blocks):
                 blk_pos = sim.get_object_pos(i)  # (B, 3)
                 block_pos0.append(blk_pos[0].detach().cpu())
                 d = torch.linalg.norm(tcp_pos - blk_pos, dim=1)
@@ -547,12 +591,40 @@ class Objective:
         elif "above_target" in self._active_costs:
             # fallback: above_target still works if obj_avoidance weight is 0
             raw["above_target"] = torch.zeros(tcp_pos.shape[0], device=device)
-            for i in range(len(_BLOCK_SPECS)):
+            for i in range(self._n_blocks):
                 target_pos  = sim.get_object_pos(i)
                 target_quat = sim.get_object_quat(i)
                 raw["above_target"] += self._costs["above_target"](tcp_pos, target_pos, target_quat)
             raw["above_target"] = torch.where(is_push, torch.zeros_like(raw["above_target"]),
                                               raw["above_target"])
+
+        # ── Intruder exit penalty (both modes) ───────────────────────────────
+        # Penalise non-target blocks that drift toward the open bin exit (-X).
+        # The currently-pushed block (obj_idx) is excluded so the plan can
+        # legitimately move it; all other blocks should stay inside.
+        if "intruder_penalty" in self._active_costs:
+            obj_idx = step["obj_idx"]
+            intruder_cost = torch.zeros(tcp_pos.shape[0], device=device)
+            for i in range(self._n_blocks):
+                if i == obj_idx:
+                    continue
+                blk_pos = sim.get_object_pos(i)  # (B, 3)
+                # Linear ramp: 0 at (exit_x + margin), 1 at exit_x, clamped.
+                danger = torch.clamp(
+                    (self._intruder_exit_x + self._intruder_danger_margin - blk_pos[:, 0])
+                    / self._intruder_danger_margin,
+                    min=0.0, max=1.0,
+                )
+                intruder_cost += danger
+            raw["intruder_penalty"] = intruder_cost
+
+        # Draw a bright marker above the block currently being manipulated.
+        if self._draw is not None and self._call_count % 10 == 0:
+            origin = sim.scene.env_origins[0].cpu()
+            blk_cpu = obj_pos[0].detach().cpu()
+            marker = tuple((blk_cpu + origin + torch.tensor([0.0, 0.0, 0.10])).tolist())
+            self._draw.clear_points()
+            self._draw.draw_points([marker], [(1.0, 0.85, 0.0, 1.0)], [35.0])
 
         for t in raw.values():
             t[torch.isnan(t)] = 100.0
@@ -577,7 +649,21 @@ class Objective:
 
 
 # ===========================================================================
-# 5. Main
+# 5. Extended planner — adds RPC methods not in the base class
+# ===========================================================================
+
+class ExtendedMPPIPlanner(MPPIIsaacLabPlanner):
+    """Thin subclass that exposes extra zerorpc methods for recovery."""
+
+    def set_goal_offset(self, dx: float, dy: float, dz: float):
+        """Shift the current step's goal by (dx, dy, dz). Pass 0,0,0 to clear."""
+        if hasattr(self.objective, "_goal_offset"):
+            self.objective._goal_offset = torch.tensor(
+                [dx, dy, dz], dtype=torch.float32)
+
+
+# ===========================================================================
+# 6. Main
 # ===========================================================================
 
 def main():
@@ -589,15 +675,17 @@ def main():
 
     scenario_path = args_cli.scenario
     block_positions = None
+    bin_size = None
     if scenario_path is not None:
         with open(scenario_path) as f:
             sc = yaml.safe_load(f)
         is_ = sc["initial_state"]
         bin_positions = [is_["target_pos"]] + [o["pos"] for o in is_["obstacles"]]
         block_positions = [_bin_to_mppi_local(p) for p in bin_positions]
+        bin_size = sc.get("bin_size")
 
     block_cfgs = make_block_cfgs(positions=block_positions)
-    static_cfgs = make_static_cfgs(stand_urdf=cfg.stand_urdf)
+    static_cfgs = make_static_cfgs(stand_urdf=cfg.stand_urdf, bin_size=bin_size)
     # static_cfgs[1] is the table: center Z + half-thickness = surface Z
     _table_cfg = static_cfgs[0]
     table_surface_z = _table_cfg.init_state.pos[2] + _table_cfg.spawn.size[2] / 2
@@ -623,8 +711,10 @@ def main():
     )
 
     objective = Objective(cfg, table_surface_z=table_surface_z,
-                          steps_override=[] if args_cli.defer_solution else None)
-    planner = MPPIIsaacLabPlanner(
+                          steps_override=[] if args_cli.defer_solution else None,
+                          n_blocks=len(block_cfgs),
+                          plot_costs=cfg.plot_costs)
+    planner = ExtendedMPPIPlanner(
         cfg,
         objective,
         robot_cfg=robot_cfg,
