@@ -39,6 +39,10 @@ parser.add_argument("--n_steps", type=int, default=100000)
 parser.add_argument("--planner_addr", type=str, default="tcp://localhost:4242")
 parser.add_argument("--n_rollouts_draw", type=int, default=50,
                     help="Number of MPPI rollout trajectories to visualise (0 = off)")
+parser.add_argument("--output_path", type=str, default=None,
+                    help="Path to write result JSON when the episode ends.")
+parser.add_argument("--scenario", type=str, default=None,
+                    help="Scenario YAML path (passed by pipeline; currently unused by world.py).")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
 
@@ -48,6 +52,7 @@ simulation_app = app_launcher.app
 # ===========================================================================
 # 2. All other imports
 # ===========================================================================
+import json
 import os
 import sys
 import time
@@ -67,7 +72,7 @@ from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
 from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs
+from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs, make_bin_wall_rigid_cfgs
 
 
 # ===========================================================================
@@ -90,6 +95,8 @@ class WorldConfig:
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     viewer_lookat: List[float] = field(default_factory=lambda: [0.25, 0.0, 0.04])
     viewer_eye:    List[float] = field(default_factory=lambda: [1.50, 0.0, 0.60])
+    bin_size: float | None = None
+    bin_center: List[float] = field(default_factory=lambda: [0.55, 0.275])
 
 
 def _load_config(yaml_path: str) -> WorldConfig:
@@ -102,6 +109,8 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.stand_urdf        = raw.get("stand_urdf",        cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+    cfg.bin_size          = raw.get("bin_size",          None)
+    cfg.bin_center        = raw.get("bin_center",        cfg.bin_center)
 
     if "isaaclab" in raw:
         il = raw["isaaclab"]
@@ -262,8 +271,11 @@ def main():
         num_envs=1,
         ee_link_name=cfg.ee_link_name,
         goal=cfg.goal,
-        object_cfgs=make_block_cfgs(),
-        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
+        object_cfgs=make_block_cfgs() + (make_bin_wall_rigid_cfgs(cfg.bin_size, cfg.bin_center) if cfg.bin_size is not None else []),
+        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf,
+                                     bin_size=cfg.bin_size,
+                                     bin_center=cfg.bin_center,
+                                     skip_bin_walls=True),
     )
     device = world.device
     DOF = world.num_dof
@@ -302,6 +314,9 @@ def main():
     print(f"[world] Body names: {list(world.robot.body_names)}")
 
     t_prev = time.time()
+    t_start = t_prev
+    output_path = getattr(args_cli, 'output_path', None)
+    done = False
 
     for step in range(cfg.n_steps):
         if not simulation_app.is_running():
@@ -325,11 +340,11 @@ def main():
         # ------------------------------------------------------------------
         # 2. Visualise rollouts + goal (before stepping so viewer is current)
         # ------------------------------------------------------------------
+        goal_now = bytes_to_torch(planner.get_current_goal_pos())
         if vis is not None:
             rollout_bytes = planner.get_rollouts()
             origin = world.scene.env_origins[0]
             ee_quat = world.get_ee_quat()[0]      # (4,) w,x,y,z world frame
-            goal_now = bytes_to_torch(planner.get_current_goal_pos())
             vis.update(rollout_bytes, goal_now, ee_quat, origin, n_rollouts_draw)
 
         # ------------------------------------------------------------------
@@ -357,16 +372,44 @@ def main():
 
         elapsed = time.time() - t_prev
         t_prev = time.time()
-        print(
-            f"\r[{step:05d}] "
-            f"EE [{ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}]  "
-            f"{step_label}  "
-            f"{elapsed*1000:.0f} ms/step",
-            end="",
-            flush=True,
-        )
+        # print(
+        #     f"\r[{step:05d}] "
+        #     f"TCP [{ee_pos[0]:.3f}, {ee_pos[1]:.3f}, {ee_pos[2]:.3f}]  "
+        #     f"G [{goal_now[0]:.3f},{goal_now[1]:.3f},{goal_now[2]:.3f}]  "
+        #     f"{step_label}  "
+        #     f"{elapsed*1000:.0f} ms/step",
+        #     end="",
+        #     flush=True,
+        # )
+
+        try:
+            if planner.is_done():
+                done = True
+                print(f"\n[world] Task complete after {step + 1} steps.", flush=True)
+                break
+        except Exception:
+            pass
 
     print("\n[world] Done.")
+
+    if output_path:
+        try:
+            total_steps_n = int(bytes_to_torch(planner.get_total_steps()).item())
+            current_step_n = int(bytes_to_torch(planner.get_current_step()).item())
+        except Exception:
+            total_steps_n = 0
+            current_step_n = 0
+        result = {
+            "success":          done,
+            "target_exited":    done,
+            "steps_completed":  total_steps_n if done else current_step_n,
+            "total_steps":      total_steps_n,
+            "elapsed_time_s":   round(time.time() - t_start, 2),
+        }
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w") as f:
+            json.dump(result, f, indent=2)
+        print(f"[world] Result saved: {output_path}", flush=True)
 
 
 if __name__ == "__main__":

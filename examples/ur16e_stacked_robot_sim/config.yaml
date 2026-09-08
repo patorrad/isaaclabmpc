@@ -59,7 +59,7 @@ isaaclab:
   # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m
   env_spacing: 5.0
 headless: False
-plot_costs: true
+plot_costs: false
 stand_urdf: "/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/stand/stand.urdf"
 
 viewer:

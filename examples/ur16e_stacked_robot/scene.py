@@ -46,6 +46,9 @@ _BIN_BLOCK_SPECS = [
     ([0.0608, 0.0712, 0.025], (0.3, 0.9, 0.2)),   # 2: obstacle_1  green
     ([0.0765, 0.2095, 0.025], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
     ([0.0765, 0.3095, 0.025], (0.9, 0.5, 0.2)),   # 4: obstacle_3  orange
+    ([0.0765, 0.2095, 0.025], (0.9, 0.9, 0.2)),   # 3: obstacle_2  yellow
+    ([0.0765, 0.3095, 0.025], (0.9, 0.5, 0.2)),   # 4: obstacle_3  orange
+    ([0.2374, 0.0825, 0.025], (0.3, 0.5, 0.9)),   # 1: obstacle_0  blue
 ]
 _BLOCK_SPECS = [(_bin_to_mppi_local(pos), color) for pos, color in _BIN_BLOCK_SPECS]
 
@@ -58,8 +61,109 @@ _OBSTACLE_COLORS = [
 ]
 
 
-def make_static_cfgs(stand_urdf: str) -> list:
-    """Build AssetBaseCfg entries for the stand (URDF) and table (box)."""
+def make_bin_wall_cfgs(bin_size: float, bin_center: list | None = None,
+                       wall_thickness: float = 0.02,
+                       wall_height: float = 0.10) -> list:
+    """Build 3 bin-wall cuboids as static AssetBaseCfg (no contact sensing).
+
+    bin_center: [x, y] in MPPI world frame. Defaults to [0.55, 0.275].
+    Exit is at the low-X side — no wall there.
+    Back wall at high-X; side walls at low-Y and high-Y.
+    """
+    T = wall_thickness
+    H = wall_height
+    cx, cy = bin_center if bin_center is not None else [0.55, 0.275]
+    x0 = cx - bin_size / 2   # MPPI x at EW=0
+    y0 = cy - bin_size / 2   # MPPI y at NS=0
+    z0 = 1.194   # table top z (table center 1.159 + half-height 0.035)
+    z_c = z0 + H / 2
+
+    wall_material = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.65, 0.55, 0.45)) #, opacity=1.0)
+    phys_material = sim_utils.RigidBodyMaterialCfg(static_friction=0.5, dynamic_friction=0.5)
+
+    def _wall(size, pos):
+        return AssetBaseCfg(
+            prim_path="PLACEHOLDER",
+            spawn=sim_utils.CuboidCfg(
+                size=size,
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=wall_material,
+                physics_material=phys_material,
+            ),
+            init_state=AssetBaseCfg.InitialStateCfg(pos=pos),
+        )
+
+    return [
+        # Back wall (EW = bin_size, high-X)
+        _wall(size=(T, bin_size + 2*T, H),
+              pos=(x0 + bin_size + T/2, y0 + bin_size/2, z_c)),
+        # Side wall (NS = 0, low-Y)
+        _wall(size=(bin_size, T, H),
+              pos=(x0 + bin_size/2, y0 - T/2, z_c)),
+        # Side wall (NS = bin_size, high-Y)
+        _wall(size=(bin_size, T, H),
+              pos=(x0 + bin_size/2, y0 + bin_size + T/2, z_c)),
+    ]
+
+
+def make_bin_wall_rigid_cfgs(bin_size: float, bin_center: list | None = None,
+                              wall_thickness: float = 0.02,
+                              wall_height: float = 0.11) -> list:
+    """Build 3 kinematic RigidObjectCfg bin walls (fixed in space, visible to contact sensors).
+
+    Use these instead of make_bin_wall_cfgs when you need the robot's contact
+    sensor to detect collisions with the bin — pass them in object_cfgs alongside
+    the puzzle blocks.  They are kinematic (disable_gravity + kinematic_enabled)
+    so PhysX keeps them fixed regardless of forces.
+    """
+    T = wall_thickness
+    H = wall_height
+    cx, cy = bin_center if bin_center is not None else [0.55, 0.275]
+    x0 = cx - bin_size / 2
+    y0 = cy - bin_size / 2
+    z0 = 1.194
+    z_c = z0 + H / 2
+
+    wall_material = sim_utils.PreviewSurfaceCfg(diffuse_color=(0.65, 0.55, 0.45))
+    phys_material = sim_utils.RigidBodyMaterialCfg(static_friction=0.5, dynamic_friction=0.5)
+
+    def _wall(size, pos):
+        return RigidObjectCfg(
+            prim_path="PLACEHOLDER",
+            spawn=sim_utils.CuboidCfg(
+                size=size,
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    kinematic_enabled=True,
+                    disable_gravity=True,
+                ),
+                mass_props=sim_utils.MassPropertiesCfg(mass=1e6),
+                collision_props=sim_utils.CollisionPropertiesCfg(),
+                visual_material=wall_material,
+                physics_material=phys_material,
+                activate_contact_sensors=True,
+            ),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=pos),
+        )
+
+    return [
+        _wall(size=(T + 0.5, H, bin_size + 2*T + 2), 
+              pos=(x0 + bin_size + T/2, y0 + bin_size/2, z_c)),
+        _wall(size=(bin_size, T + 0.5, H),
+              pos=(x0 + bin_size/2, y0 - T/2, z_c)),
+        _wall(size=(bin_size, T, H),
+              pos=(x0 + bin_size/2, y0 + bin_size + T/2, z_c)),
+    ]
+
+
+def make_static_cfgs(stand_urdf: str, bin_size: float | None = None,
+                     bin_center: list | None = None,
+                     wall_thickness: float = 0.02,
+                     skip_bin_walls: bool = False) -> list:
+    """Build AssetBaseCfg entries for the table, stand, and (optionally) bin walls.
+
+    Pass skip_bin_walls=True when using make_bin_wall_rigid_cfgs instead, to
+    avoid duplicate collision geometry.
+    """
     # stand_cfg = AssetBaseCfg(
     #     prim_path="PLACEHOLDER",  # replaced by _make_scene_cfg
     #     spawn=sim_utils.UrdfFileCfg(
@@ -96,7 +200,10 @@ def make_static_cfgs(stand_urdf: str) -> list:
         init_state=AssetBaseCfg.InitialStateCfg(pos=(-0.3, 0.0, 0.0)),
     )
 
-    return [table_cfg, stand2_cfg]
+    cfgs = [table_cfg, stand2_cfg]
+    if bin_size is not None and not skip_bin_walls:
+        cfgs += make_bin_wall_cfgs(bin_size, bin_center, wall_thickness)
+    return cfgs
 
 
 def make_block_cfgs(positions: list | None = None) -> list:

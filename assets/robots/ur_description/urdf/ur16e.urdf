@@ -366,30 +366,43 @@
                ixy="0" ixz="0" iyz="0"/>
     </inertial>
 
-    <!-- visual: pipe nipple -->
+    <!-- visual: coupling adapter (34 mm cylinder at the base) -->
     <visual>
-      <!-- center of the cylinder 8 cm in front of tool0 along +Z -->
-      <origin xyz="0 0 0.065" rpy="0 0 0"/>
+      <origin xyz="0 0 0.017" rpy="0 0 0"/>
       <geometry>
-        <!-- radius = 1. cm, total length = 11.5 cm -->
-        <cylinder radius="0.0025" length="0.13"/>
+        <cylinder radius="0.04" length="0.034"/>
+      </geometry>
+      <material name="coupling_grey">
+        <color rgba="0.4 0.4 0.4 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.017" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.04" length="0.034"/>
+      </geometry>
+    </collision>
+
+    <!-- visual: pipe nipple (shortened by 34 mm at the base) -->
+    <visual>
+      <origin xyz="0 0 0.082" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.0025" length="0.096"/>
       </geometry>
       <material name="gripper_black">
         <color rgba="0.1 0.1 0.1 1.0"/>
       </material>
     </visual>
-
-    <!-- collision: same as visual -->
     <collision>
-      <origin xyz="0 0 0.065" rpy="0 0 0"/>
+      <origin xyz="0 0 0.082" rpy="0 0 0"/>
       <geometry>
-        <cylinder radius="0.0025" length="0.13"/>
+        <cylinder radius="0.0025" length="0.096"/>
       </geometry>
     </collision>
 
-    <!-- optional: tiny sphere to visualize TCP at the tip -->
+    <!-- tiny sphere to visualize TCP at the tip -->
     <visual>
-      <origin xyz="0 0 0.1295" rpy="0 0 0"/>  <!-- tip of the cylinder -->
+      <origin xyz="0 0 0.1295" rpy="0 0 0"/>
       <geometry>
         <sphere radius="0.005"/>
       </geometry>
@@ -398,7 +411,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0 0.13" rpy="0 0 0"/>  <!-- tip of the cylinder -->
+      <origin xyz="0 0 0.13" rpy="0 0 0"/>
       <geometry>
         <sphere radius="0.005"/>
       </geometry>

@@ -1,5 +1,5 @@
 # Distance threshold (metres) for declaring a step complete
-step_threshold: 0.04
+step_threshold: 0.065
 
 # Configuration for ur16e_reach example
 # Mirrors the structure of genesismpc's config_ur.yaml
@@ -33,8 +33,8 @@ ee_link_name: "wrist_3_link"
 mppi:
   mppi_mode: "halton-spline"
   sampling_method: "halton"
-  num_samples: 250
-  horizon: 18
+  num_samples: 750
+  horizon: 20
   device: "cuda:0"
   u_min: [-0.08]
   u_max: [0.08]
@@ -62,6 +62,21 @@ isaaclab:
   env_spacing: 5.0
 headless: False
 stand_urdf: "/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/stand/stand.urdf"
+bin_size: 0.4       # set to a float (e.g. 0.27) to spawn bin walls; null = no walls
+bin_center: [0.55, 0.275]  # [x, y] in MPPI world frame — center of the bin
+# Tracking Filter
+# Wrist-3 camera tracking: rotates last joint to keep target block in view
+wrist_cam_target_deg: -50.0   # desired target azimuth in wrist xy-plane (deg from +x)
+                               # calibrate: set wrist_cam weight=0, manually center target,
+                               # read az= from MPPI cost debug, set that value here
+
+pose_filter_type:     "none"  # filter mode: none / ema / ekf / ekf_full
+pose_filter_alpha:    0.01  # EMA / EKF-quat: weight for new poses (1.0 = off)
+pose_filter_max_jump: 0.0   # EMA: outlier gate in metres (0.0 = off)
+pose_filter_sigma_a:   0.1  # EKF: position acceleration noise (m/s²)
+pose_filter_sigma_r:   0.01 # EKF: position measurement noise (m)
+pose_filter_sigma_w:   1.5  # EKF_full: angular velocity noise (rad/s)
+pose_filter_sigma_rot: 50.0 # EKF_full: quaternion measurement noise
 
 viewer:
   # x, y in world frame; z is height ABOVE the table surface.
@@ -75,19 +90,25 @@ costs:
     robot_to_obj:  30.0    # TCP distance to current block (push mode only)
     obj_to_goal:   30.0    # block distance to its goal   (push mode only)
     robot_ori:     30.0    # wrist polar tilt from straight-down (arccos)
-    height_match:  40.0    # TCP Z vs block Z             (both modes)
+    height_match:  55.0    # TCP Z vs block Z             (both modes)
     push_align:    45.0    # TCP behind block relative to push direction (both modes)
     collision:      0.0    # wrist contact force (Z component)
     joint_vel:      3.0    # joint velocity magnitude
     singularity:    0.00   # reciprocal manipulability (1/|det J|)
     tcp_floor:     30.0    # penalty for TCP going below table surface + offset
     above_target:   0.0    # replaced by obj_avoidance
-    obj_avoidance: 20.0    # 1/(d+eps) repulsion from all blocks (approach mode only)
+    obj_avoidance: 10.0    # 1/(d+eps) repulsion from all blocks (approach mode only)
+    intruder_penalty: 10.0  # penalty for non-target blocks near the bin exit — off until tuned on hardware
+    wrist_cam:         0.0  # camera alignment: |az_error| in radians; 0 = off
+    bin_collision: 1.0
+    stacked_contact: 0.0
   approach_push_align_threshold:   .3  # push_align below this → "aligned"
   approach_height_match_threshold: 0.02   # height_match below this → "at height"
-  obj_avoidance_dist_threshold:    0.1   # repulsion is zero beyond this distance (m)
+  obj_avoidance_dist_threshold:    0.2   # repulsion is zero beyond this distance (m)
+  intruder_exit_x:        0.35  # MPPI x of bin exit boundary (matches bin_center[0] - bin_size/2 below)
+  intruder_danger_margin: 0.10  # ramp starts this far inside the exit (m)
   push_align_gate_width: 0.05   # sigmoid transition width (metres)
-  tcp_floor_offset: 0.0075        # safety margin above table surface (metres)
+  tcp_floor_offset: 0.02 #0.0075        # safety margin above table surface (metres)
   obj_half_size: 0.025
   gaussian_projection:
     enabled: true
@@ -101,3 +122,6 @@ costs:
     singularity:   {n: 2, c: 0.0, s: 0.0, r: 0.0}
     tcp_floor:     {n: 2, c: 0.025, s: 0.0, r: 1.0e-5}
     obj_avoidance: {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    intruder_penalty: {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    wrist_cam:        {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    bin_collision:        {n: 2, c: 0.0, s: 0.0, r: 0.0}

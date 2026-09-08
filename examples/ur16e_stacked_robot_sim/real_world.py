@@ -94,6 +94,7 @@ class WorldConfig:
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
     viewer_lookat: List[float] = field(default_factory=lambda: [0.25, 0.0, 0.04])
     viewer_eye:    List[float] = field(default_factory=lambda: [1.50, 0.0, 0.60])
+    bin_size: float | None = None
 
 
 def _load_config(yaml_path: str) -> WorldConfig:
@@ -106,6 +107,7 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.stand_urdf        = raw.get("stand_urdf",        cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+    cfg.bin_size          = raw.get("bin_size",          None)
 
     if "isaaclab" in raw:
         il = raw["isaaclab"]
@@ -232,7 +234,8 @@ def main():
         ee_link_name="wrist_3_link",
         goal=[0.4, 0.2, 0.6],
         object_cfgs=make_block_cfgs(),
-        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
+        static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf,
+                                     bin_size=cfg.bin_size),
     )
     device = world.device
 

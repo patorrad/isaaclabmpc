@@ -34,7 +34,7 @@ parser.add_argument("--defer_solution", action="store_true",
                     help="Start without a solution; receive steps via reset_episode() RPC.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
-args_cli.headless = True   # planner always runs headless
+args_cli.headless = False   # planner always runs headless
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app

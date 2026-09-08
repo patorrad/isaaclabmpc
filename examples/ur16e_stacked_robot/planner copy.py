@@ -34,7 +34,7 @@ parser.add_argument("--defer_solution", action="store_true",
                     help="Start without a solution; receive steps via reset_episode() RPC.")
 AppLauncher.add_app_launcher_args(parser)
 args_cli, _ = parser.parse_known_args()
-args_cli.headless = True   # planner always runs headless
+args_cli.headless = True          # planner always runs headless
 
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
@@ -75,10 +75,7 @@ from isaaclab_mpc.cost import (
 )
 from isaaclab_mpc.cost.utils import quat_apply
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
-from examples.ur16e_stacked_robot.scene import (
-    make_static_cfgs, make_block_cfgs, make_bin_wall_rigid_cfgs,
-    _bin_to_mppi_local, _BLOCK_SPECS,
-)
+from examples.ur16e_stacked_robot.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local, _BLOCK_SPECS
 
 
 # ===========================================================================
@@ -99,9 +96,6 @@ class CostWeights:
     above_target:  float = 0.
     obj_avoidance: float = 0.0  # inverse-distance repulsion from all blocks (approach mode)
     intruder_penalty: float = 0.0  # penalty for non-target blocks near the bin exit
-    wrist_cam: float = 0.0  # angle error (rad) for wrist camera alignment
-    bin_collision: float = 0.0  # contact force between robot and bin walls
-    stacked_contact: float = 0.0  # contact force between robot and elevated (stacked) blocks
 
 
 @dataclass
@@ -133,9 +127,6 @@ class GaussianProjectionConfig:
     above_target:  GaussianProjParams = field(default_factory=GaussianProjParams)
     obj_avoidance: GaussianProjParams = field(default_factory=GaussianProjParams)
     intruder_penalty: GaussianProjParams = field(default_factory=GaussianProjParams)
-    wrist_cam: GaussianProjParams = field(default_factory=GaussianProjParams)
-    bin_collision: GaussianProjParams = field(default_factory=GaussianProjParams)
-    stacked_contact: GaussianProjParams = field(default_factory=GaussianProjParams)
 
 
 @dataclass
@@ -170,7 +161,6 @@ class PlannerConfig:
     solution_path: str = "solution_obs_3_simple_extraction_robot.json"
     step_threshold: float = 0.02
     stand_urdf: str = ""
-    bin_size:   Optional[float] = None
     bin_center: List[float] = field(default_factory=lambda: [0.55, 0.275])
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
@@ -185,7 +175,10 @@ class PlannerConfig:
     pose_filter_sigma_w:   float = 1.5  # EKF_full: angular velocity noise (rad/s)
     pose_filter_sigma_rot: float = 0.001 # EKF_full: quaternion measurement noise
     # Wrist-3 camera tracking: rotate last joint to keep target in view
-    wrist_cam_target_deg: float = 180.0 # desired target azimuth in wrist xy-plane (deg from +x)
+    wrist_cam_kp:              float = 0.0   # P-gain (0 = disabled)
+    wrist_cam_v_max:           float = 0.5   # velocity clamp (rad/s)
+    wrist_cam_target_deg:      float = 180.0 # desired target azimuth in wrist xy-plane (deg from +x)
+    wrist_cam_az_rate_max_deg: float = 30.0  # max azimuth change per step (deg); 0 = off
 
 
 def _load_config(yaml_path: str) -> PlannerConfig:
@@ -200,7 +193,6 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.solution_path   = raw.get("solution_path",   cfg.solution_path)
     cfg.step_threshold  = raw.get("step_threshold",  cfg.step_threshold)
     cfg.stand_urdf      = raw.get("stand_urdf",      cfg.stand_urdf)
-    cfg.bin_size        = raw.get("bin_size",         cfg.bin_size)
     cfg.bin_center      = raw.get("bin_center",      cfg.bin_center)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
@@ -211,7 +203,10 @@ def _load_config(yaml_path: str) -> PlannerConfig:
     cfg.pose_filter_sigma_r   = float(raw.get("pose_filter_sigma_r",   cfg.pose_filter_sigma_r))
     cfg.pose_filter_sigma_w   = float(raw.get("pose_filter_sigma_w",   cfg.pose_filter_sigma_w))
     cfg.pose_filter_sigma_rot = float(raw.get("pose_filter_sigma_rot", cfg.pose_filter_sigma_rot))
-    cfg.wrist_cam_target_deg = float(raw.get("wrist_cam_target_deg", cfg.wrist_cam_target_deg))
+    cfg.wrist_cam_kp              = float(raw.get("wrist_cam_kp",              cfg.wrist_cam_kp))
+    cfg.wrist_cam_v_max           = float(raw.get("wrist_cam_v_max",           cfg.wrist_cam_v_max))
+    cfg.wrist_cam_target_deg      = float(raw.get("wrist_cam_target_deg",      cfg.wrist_cam_target_deg))
+    cfg.wrist_cam_az_rate_max_deg = float(raw.get("wrist_cam_az_rate_max_deg", cfg.wrist_cam_az_rate_max_deg))
 
     if "mppi" in raw:
         cfg.mppi = MPPIConfig(**{k: v for k, v in raw["mppi"].items()})
@@ -240,8 +235,7 @@ def _load_config(yaml_path: str) -> PlannerConfig:
             gp.enabled = bool(gp_raw.get("enabled", False))
             _cost_keys = ["robot_to_obj", "obj_to_goal", "robot_ori", "height_match",
                           "push_align", "joint_vel", "collision", "singularity", "tcp_floor",
-                          "above_target", "obj_avoidance", "intruder_penalty", "bin_collision",
-                          "stacked_contact"]
+                          "above_target", "obj_avoidance", "intruder_penalty"]
             for key in _cost_keys:
                 if key in gp_raw:
                     p = gp_raw[key]
@@ -293,12 +287,7 @@ class Objective:
     _PLOT_INTERVAL = 50
     _EMA_ALPHA     = 0.05
 
-    _WAYPOINT_Z_OFFSET = 0.04  # metres above table surface for all step goal z-coords
-
-    def __init__(self, cfg: PlannerConfig, table_surface_z: float = 0.0,
-                 steps_override: list | None = None, n_blocks: int | None = None):
-        self._table_surface_z = table_surface_z
-        self._n_blocks = n_blocks  # None → use len(sim.objects) at call time
+    def __init__(self, cfg: PlannerConfig, table_surface_z: float = 0.0, steps_override: list | None = None):
         w = cfg.costs.weights
         self.weights = {
             "robot_to_obj":  w.robot_to_obj,
@@ -313,12 +302,7 @@ class Objective:
             "above_target":  w.above_target,
             "obj_avoidance": w.obj_avoidance,
             "intruder_penalty": w.intruder_penalty,
-            "wrist_cam":     w.wrist_cam,
-            "bin_collision": w.bin_collision,
-            "stacked_contact": w.stacked_contact,
         }
-        import math as _math
-        self._cam_target_rad = float(cfg.wrist_cam_target_deg) * (_math.pi / 180.0)
         self._approach_pa_threshold    = cfg.costs.approach_push_align_threshold
         self._approach_hm_threshold    = cfg.costs.approach_height_match_threshold
         self._obj_avoidance_eps        = cfg.costs.obj_avoidance_eps
@@ -385,13 +369,11 @@ class Objective:
             obj_size = solution.get("env_config", {}).get("OBJ_SIZE", 0.05)
             self._obj_half_size = obj_size / 2
             self._costs["above_target"] = AboveObjectCost(obj_half_size=self._obj_half_size)
-        self._fix_waypoint_z(self.steps)
         self.current_step = 0
         self._last_obj_pos: Optional[torch.Tensor] = None
         self._first_call = True
         self._is_push_mode = False   # locked for full rollout, re-evaluated each planning cycle
         self._printed_initial_poses = False
-        self.target_exited = False
 
         self._labels = list(self.weights.keys())
         self._cost_avg = {k: 0.0 for k in self._labels}
@@ -484,15 +466,6 @@ class Objective:
             self._fig2.canvas.draw_idle()
             self._fig2.canvas.flush_events()
 
-    def _fix_waypoint_z(self, steps: list) -> None:
-        """Force every step's end_pos z to table_surface_z + WAYPOINT_Z_OFFSET."""
-        z = self._table_surface_z + self._WAYPOINT_Z_OFFSET
-        for step in steps:
-            ep = step["end_pos"]
-            step["end_pos"] = [ep[0], ep[1], z]
-        print(f"[Objective] waypoint z forced to {z:.4f} m "
-              f"(table={self._table_surface_z:.4f} + {self._WAYPOINT_Z_OFFSET:.3f})")
-
     def reset(self):
         """Advance to next step if current block reached its goal."""
         if self._last_obj_pos is not None and self.current_step < len(self.steps):
@@ -514,22 +487,18 @@ class Objective:
                               f"now pushing {ns['obj_name']} → {ns['end_pos']}")
                     else:
                         print(f"\n[Step] All {len(self.steps)} steps completed!")
-            # (last-step exit detection moved to compute_action_tensor
-            #  so it uses the real camera position, not the MPPI sim's env 0)
         self._first_call = True
 
     def reset_episode(self, steps: list | None = None):
         """Replace solution steps and reset to step 0. Called by MPPIIsaacLabPlanner.reset_episode()."""
         if steps is not None:
             self.steps = steps
-            self._fix_waypoint_z(self.steps)
             print(f"[Objective] reset_episode: loaded {len(steps)} steps")
             for i, step in enumerate(steps):
                 print(f"  Step {i}: push {step['obj_name']} (idx {step['obj_idx']}) → {step['end_pos']}")
         self.current_step = 0
         self._first_call = True
         self._last_obj_pos = None
-        self.target_exited = False
 
     def compute_cost(self, sim) -> torch.Tensor:
         device = sim.device
@@ -551,12 +520,6 @@ class Objective:
         sim.set_goal(goal_pos)
 
         obj_pos = sim.get_object_pos(obj_idx)  # (num_envs, 3)
-
-        p0 = obj_pos[0]
-        if torch.isnan(p0).any() or torch.isinf(p0).any() or p0.abs().max().item() > 100.0:
-            print(f"\n[Objective] ERROR: target object pos blew up: {p0.tolist()}", flush=True)
-
-        _is_first = self._first_call  # capture before the flag is cleared below
 
         # Cache real object position (env 0) for step-advance check in reset()
         if self._first_call:
@@ -603,21 +566,6 @@ class Objective:
             raw["collision"] = self._costs["collision"](
                 sim.get_contact_forces(0)
             )
-        if "bin_collision" in self._active_costs:
-            fm = sim.get_contact_pair_forces(2)  # (B, 1, n_walls, 3)
-            raw["bin_collision"] = fm.norm(dim=-1).sum(dim=-1).squeeze(-1)
-        if "stacked_contact" in self._active_costs:
-            fm = sim.get_contact_pair_forces(1)  # (B, 1, n_blocks, 3)
-            _n = self._n_blocks if self._n_blocks is not None else fm.shape[2]
-            # stacked threshold: block center > one block height above table surface
-            stacked_z = self._table_surface_z + 2.0 * self._obj_half_size
-            cost_sc = torch.zeros(fm.shape[0], device=device)
-            for i in range(_n):
-                blk_z = sim.get_object_pos(i)[:, 2]          # (B,)
-                is_stacked = (blk_z > stacked_z).float()
-                force_mag = fm[:, 0, i, :].norm(dim=-1)       # (B,)
-                cost_sc += is_stacked * force_mag
-            raw["stacked_contact"] = cost_sc
         if "joint_vel" in self._active_costs:
             raw["joint_vel"] = self._costs["joint_vel"](sim.get_joint_vel())
         if "singularity" in self._active_costs:
@@ -633,34 +581,15 @@ class Objective:
                 # Exit step: drive the block past the exit line rather than to a point.
                 exit_dist = torch.clamp(obj_pos[:, 0] - (self._intruder_exit_x - 0.08), min=0.0)
                 raw["obj_to_goal"] = torch.where(is_push, exit_dist, torch.zeros_like(exit_dist))
-                if _is_first:
-                    obj_x0    = obj_pos[0, 0].item()
-                    obj_z0    = obj_pos[0, 2].item()
-                    dist_exit = obj_x0 - self._intruder_exit_x
-                    # print(
-                    #     f"[obj_to_goal] obj_x={obj_x0:.4f}  dist_to_exit={dist_exit:.4f}  "
-                    #     f"obj_z={obj_z0:.4f}",
-                    #     flush=True,
-                    # )
             else:
                 otg = self._costs["obj_to_goal"](obj_to_goal)
                 raw["obj_to_goal"] = torch.where(is_push, otg, torch.zeros_like(otg))
-                if _is_first:
-                    obj_x0 = obj_pos[0, 0].item()
-                    obj_z0 = obj_pos[0, 2].item()
-                    goal_x = goal_pos[0].item()
-                    # print(
-                    #     f"[obj_to_goal] obj_x={obj_x0:.4f}  goal_x={goal_x:.4f}  "
-                    #     f"dist={obj_x0 - goal_x:.4f}  obj_z={obj_z0:.4f}",
-                    #     flush=True,
-                    # )
 
         # ── Approach-mode-only costs (zeroed in push mode) ───────────────────
         if "obj_avoidance" in self._active_costs:
             avoid = torch.zeros(tcp_pos.shape[0], device=device)
             block_pos0 = []
-            _n = self._n_blocks if self._n_blocks is not None else len(sim.objects)
-            for i in range(_n):
+            for i in range(len(_BLOCK_SPECS)):
                 blk_pos = sim.get_object_pos(i)  # (B, 3)
                 block_pos0.append(blk_pos[0].detach().cpu())
                 d = torch.linalg.norm(tcp_pos - blk_pos, dim=1)
@@ -678,24 +607,12 @@ class Objective:
         elif "above_target" in self._active_costs:
             # fallback: above_target still works if obj_avoidance weight is 0
             raw["above_target"] = torch.zeros(tcp_pos.shape[0], device=device)
-            _n = self._n_blocks if self._n_blocks is not None else len(sim.objects)
-            for i in range(_n):
+            for i in range(len(_BLOCK_SPECS)):
                 target_pos  = sim.get_object_pos(i)
                 target_quat = sim.get_object_quat(i)
                 raw["above_target"] += self._costs["above_target"](tcp_pos, target_pos, target_quat)
             raw["above_target"] = torch.where(is_push, torch.zeros_like(raw["above_target"]),
                                               raw["above_target"])
-
-        # ── Wrist camera alignment (both modes) ──────────────────────────────
-        if "wrist_cam" in self._active_costs:
-            d_world = obj_pos - ee_pos                                        # (B, 3)
-            d_norm  = d_world / d_world.norm(dim=1, keepdim=True).clamp(min=0.01)
-            q_conj  = torch.cat([ee_quat[:, :1], -ee_quat[:, 1:]], dim=1)
-            d_local = quat_apply(q_conj, d_norm)                              # (B, 3)
-            az      = torch.atan2(d_local[:, 1], d_local[:, 0])              # (B,)
-            err     = torch.atan2(torch.sin(az - self._cam_target_rad),
-                                  torch.cos(az - self._cam_target_rad))       # (B,) in [-π, π]
-            raw["wrist_cam"] = err.abs()
 
         # ── Intruder exit penalty (both modes) ───────────────────────────────
         # Penalise non-target blocks that drift toward the open bin exit (-X).
@@ -703,8 +620,7 @@ class Objective:
         # legitimately move it; all other blocks should stay inside.
         if "intruder_penalty" in self._active_costs:
             intruder_cost = torch.zeros(tcp_pos.shape[0], device=device)
-            _n = self._n_blocks if self._n_blocks is not None else len(sim.objects)
-            for i in range(_n):
+            for i in range(len(_BLOCK_SPECS)):
                 if i == obj_idx:
                     continue
                 blk_pos = sim.get_object_pos(i)  # (B, 3)
@@ -887,13 +803,19 @@ class FilteredMPPIIsaacLabPlanner(MPPIIsaacLabPlanner):
         self._f_sigma_rot = float(getattr(cfg, 'pose_filter_sigma_rot', 0.05))
         # EMA state
         self._f_states:   list | None = None
-        # Fixed bin-wall states (captured once on first call, replayed every step)
-        self._fixed_bin_states: list | None = None
         # EKF state
         self._pos_ekfs:   list[_PoseEKF]        = []
         self._ori_ekfs:   list[_OrientationEKF] = []
         self._prev_quats: list                  = []
 
+        self._cam_kp    = float(getattr(cfg, 'wrist_cam_kp',    0.0))
+        self._cam_v_max = float(getattr(cfg, 'wrist_cam_v_max', 0.5))
+        import math as _math
+        # wrist_cam_target_deg: angle from +x in wrist xy-plane where the target should
+        # appear when the camera is centered.  Run with kp=0 first, manually rotate wrist_3
+        # until the target is centered, then read d_local from the debug output and set
+        # this to atan2(d_local[1], d_local[0]) in degrees.
+        self._cam_target_rad = float(getattr(cfg, 'wrist_cam_target_deg', 180.0)) * (_math.pi / 180.0)
 
         t = self._f_type
         if t == 'ema' and self._f_alpha < 1.0:
@@ -975,14 +897,67 @@ class FilteredMPPIIsaacLabPlanner(MPPIIsaacLabPlanner):
             return self._filter_ekf_full(object_states)
         return self._filter_ema(object_states)
 
-    def is_done(self) -> bool:
-        """Return True when the last goal (exit line) has been reached."""
-        # if bool(getattr(self.objective, 'target_exited', False)):
-        #     print("MPPI DONE")
-        return bool(getattr(self.objective, 'target_exited', False))
+    def _wrist_cam_override(self, u_bytes: bytes, object_states, dof_state_bytes: bytes) -> bytes:
+        """Replace u[-1] (wrist_3 velocity) with a P-controller that keeps
+        the gripper camera aimed at the target block (object_states[0])."""
+        import math
+        from isaaclab_mpc.utils.transport import bytes_to_torch, torch_to_bytes
+
+        target_pos = object_states[0][0].cpu().float()
+        ee_pos  = self.sim.get_ee_pos()[0].cpu().float()   # (3,)
+        ee_quat = self.sim.get_ee_quat()[0].cpu().float()  # (4,) w,x,y,z
+
+        d_world = target_pos - ee_pos
+        if d_world.norm().item() < 0.01:
+            return u_bytes
+
+        d_world = d_world / d_world.norm()
+        # Rotate into wrist local frame: apply conjugate quaternion
+        q_conj  = torch.cat([ee_quat[:1], -ee_quat[1:]])
+        d_local = quat_apply(q_conj, d_world)   # (3,)
+
+        # Compute target azimuth in wrist xy-plane and shortest-arc error.
+        tx, ty  = d_local[0].item(), d_local[1].item()
+        raw_az  = math.atan2(ty, tx)
+
+        angle_err = math.atan2(math.sin(raw_az - self._cam_target_rad),
+                               math.cos(raw_az - self._cam_target_rad))
+
+        v5 = float(self._cam_kp * angle_err)
+        v5 = max(-self._cam_v_max, min(self._cam_v_max, v5))
+
+        # Soft joint-limit clamp at ±1.5π — zero velocity only at the boundary,
+        # never at ±2π where there is no room to reverse.
+        dof_state = bytes_to_torch(dof_state_bytes)
+        q5 = dof_state[5].item()   # wrist_3 joint position (rad)
+        limit = math.pi * 1.5
+        if q5 >= limit and v5 > 0:
+            v5 = 0.0
+        elif q5 <= -limit and v5 < 0:
+            v5 = 0.0
+
+        print(f"[wrist_cam] az={math.degrees(raw_az):.1f}°  target={math.degrees(self._cam_target_rad):.1f}°  err={math.degrees(angle_err):.1f}°  q5={q5:.3f}  v5={v5:.4f}", flush=True)
+
+        u = bytes_to_torch(u_bytes).clone()
+        u[-1] = v5
+        return torch_to_bytes(u)
 
     def compute_action_tensor(self, dof_state_bytes, root_state_bytes):
         from isaaclab_mpc.utils.transport import bytes_to_torch, torch_to_bytes
+        if self._is_passthrough():
+            u_bytes = super().compute_action_tensor(dof_state_bytes, root_state_bytes)
+            # Always call override for debug output; v5=0 when kp=0
+            from isaaclab_mpc.utils.transport import bytes_to_torch as _b2t
+            _ds  = _b2t(dof_state_bytes)
+            _off = self.sim.num_dof * 2
+            _obs = []
+            while _off + 7 <= _ds.numel():
+                _obs.append((_ds[_off:_off+3].to(self.device, dtype=torch.float32),
+                             _ds[_off+3:_off+7].to(self.device, dtype=torch.float32)))
+                _off += 7
+            if _obs:
+                u_bytes = self._wrist_cam_override(u_bytes, _obs, dof_state_bytes)
+            return u_bytes
         dof_state = bytes_to_torch(dof_state_bytes)
         DOF = self.sim.num_dof
         offset = DOF * 2
@@ -992,51 +967,6 @@ class FilteredMPPIIsaacLabPlanner(MPPIIsaacLabPlanner):
             quat = dof_state[offset + 3: offset + 7].to(self.device, dtype=torch.float32)
             object_states.append((pos, quat))
             offset += 7
-        # Exit detection — runs regardless of filter mode, uses raw camera position
-        if object_states and not getattr(self.objective, 'target_exited', False):
-            real_bx  = object_states[0][0][0].item()
-            exit_x   = getattr(self.objective, '_intruder_exit_x', 0.37)
-            n_steps  = len(getattr(self.objective, 'steps', []))
-            cur_step = getattr(self.objective, 'current_step', -1)
-            # print(f"\n[Planner] exit check: obj_x={real_bx:.4f}  exit_x={exit_x:.4f}"
-            #       f"  step={cur_step}/{n_steps}  n_objects={len(object_states)}",
-            #       flush=True)
-            if real_bx <= exit_x:
-                print(f"\n[Planner] *** Target block crossed exit line"
-                      f" (x={real_bx:.4f} <= {exit_x:.4f}) — setting target_exited=True ***",
-                      flush=True)
-                self.objective.target_exited = True
-
-        # Once target has exited, return zeros — skip MPPI rollouts to prevent physics explosion hang
-        if getattr(self.objective, 'target_exited', False):
-            return torch_to_bytes(torch.zeros(DOF))
-
-        # Fix bin-wall states (last 2 object_states) at their first-seen position.
-        # Applied before passthrough check so it takes effect in all filter modes.
-        _BIN_TRACKER_Z_OFFSET = 0.035  # metres — tune here
-        _BIN_TRACKER_OFFSETS = [
-            torch.tensor([0.25,   0.0,  _BIN_TRACKER_Z_OFFSET]),
-            torch.tensor([0.15,  -0.25, 0.07]),
-        ]
-        if len(object_states) >= 2:
-            if self._fixed_bin_states is None:
-                self._fixed_bin_states = []
-                for i, offset in enumerate(_BIN_TRACKER_OFFSETS):
-                    pos, quat = object_states[-(2 - i)]
-                    fixed_pos = (pos + offset.to(pos.device)).clone()
-                    self._fixed_bin_states.append((fixed_pos, quat.clone()))
-            # Overwrite the last 2 entries with the frozen states.
-            for i, (fixed_pos, fixed_quat) in enumerate(self._fixed_bin_states):
-                object_states[-(2 - i)] = (fixed_pos, fixed_quat)
-            parts = [dof_state[:DOF * 2].cpu()]
-            for p, q in object_states:
-                parts.append(p.cpu())
-                parts.append(q.cpu())
-            dof_state_bytes = torch_to_bytes(torch.cat(parts))
-
-        if self._is_passthrough():
-            return super().compute_action_tensor(dof_state_bytes, root_state_bytes)
-
         if object_states:
             object_states = self._filter(object_states)
             parts = [dof_state[:DOF * 2].cpu()]
@@ -1045,9 +975,9 @@ class FilteredMPPIIsaacLabPlanner(MPPIIsaacLabPlanner):
                 parts.append(quat.cpu())
             dof_state_bytes = torch_to_bytes(torch.cat(parts))
         u_bytes = super().compute_action_tensor(dof_state_bytes, root_state_bytes)
-        u = bytes_to_torch(u_bytes).clone()
-        u[:-1] = 0.0   # DEBUG: zero all joints except wrist_3
-        return torch_to_bytes(u)
+        if object_states:  # always call for debug output; v5=0 when kp=0
+            u_bytes = self._wrist_cam_override(u_bytes, object_states, dof_state_bytes)
+        return u_bytes
 
 
 # ===========================================================================
@@ -1063,8 +993,8 @@ def main():
 
     scenario_path = args_cli.scenario
     block_positions = None
-    bin_size = cfg.bin_size        # default from config.yaml; scenario overrides below
-    bin_center = cfg.bin_center
+    bin_size = None
+    bin_center = cfg.bin_center  # default from config; scenario overrides below
     if scenario_path is not None:
         with open(scenario_path) as f:
             sc = yaml.safe_load(f)
@@ -1088,10 +1018,9 @@ def main():
               f"overriding intruder_exit_x={x0:.4f}")
 
     block_cfgs = make_block_cfgs(positions=block_positions)
-    bin_wall_cfgs = make_bin_wall_rigid_cfgs(bin_size, bin_center) if bin_size is not None else []
     static_cfgs = make_static_cfgs(stand_urdf=cfg.stand_urdf, bin_size=bin_size,
-                                   bin_center=bin_center, skip_bin_walls=True)
-    # static_cfgs[0] is the table: center Z + half-thickness = surface Z
+                                   bin_center=bin_center)
+    # static_cfgs[1] is the table: center Z + half-thickness = surface Z
     _table_cfg = static_cfgs[0]
     table_surface_z = _table_cfg.init_state.pos[2] + _table_cfg.spawn.size[2] / 2
 
@@ -1100,26 +1029,8 @@ def main():
         update_period=0.0,
         history_length=0,
         debug_vis=False,
+        # filter_prim_paths_expr=[f"{{ENV_REGEX_NS}}/Object{i}" for i in range(len(block_cfgs))],
     )
-    n_blocks = len(block_cfgs)
-    block_contact_sensor = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
-        update_period=0.0,
-        history_length=0,
-        debug_vis=False,
-        filter_prim_paths_expr=[f"{{ENV_REGEX_NS}}/Object{i}" for i in range(n_blocks)],
-    ) if n_blocks > 0 else None
-    bin_wall_contact_sensor = ContactSensorCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
-        update_period=0.0,
-        history_length=0,
-        debug_vis=False,
-        filter_prim_paths_expr=[
-            f"{{ENV_REGEX_NS}}/Object{n_blocks}",
-            f"{{ENV_REGEX_NS}}/Object{n_blocks + 1}",
-            f"{{ENV_REGEX_NS}}/Object{n_blocks + 2}",
-        ],
-    ) if bin_wall_cfgs else None
 
     _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
     robot_cfg = _base_robot_cfg.replace(
@@ -1134,20 +1045,15 @@ def main():
     )
 
     objective = Objective(cfg, table_surface_z=table_surface_z,
-                          steps_override=[] if args_cli.defer_solution else None,
-                          n_blocks=n_blocks)
+                          steps_override=[] if args_cli.defer_solution else None)
     planner = FilteredMPPIIsaacLabPlanner(
         cfg,
         objective,
         robot_cfg=robot_cfg,
         prior=None,
-        object_cfgs=block_cfgs + bin_wall_cfgs,
+        object_cfgs=block_cfgs,
         static_cfgs=static_cfgs,
-        contact_sensor_cfgs=(
-            [robot_contact_sensor]                                         # idx 0: net force
-            + ([block_contact_sensor]    if block_contact_sensor    else [])  # idx 1: per-block
-            + ([bin_wall_contact_sensor] if bin_wall_contact_sensor else [])  # idx 2: per-wall
-        ),
+        contact_sensor_cfgs=[robot_contact_sensor],
     )
 
     server = zerorpc.Server(planner)

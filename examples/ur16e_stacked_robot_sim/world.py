@@ -643,6 +643,12 @@ def main():
                 break
             print(f"\n[world] ── Episode {ep_idx+1}/{len(episodes)}: {episode['name']} ──")
 
+            # Skip episodes whose result JSON already exists (allows resume after interruption).
+            out_path = episode.get("output_path")
+            if out_path and os.path.exists(out_path):
+                print(f"[world] Skipping (result exists): {out_path}")
+                continue
+
             # Reset robot and blocks to this episode's initial state.
             object_states = _object_states_from_scenario(episode["scenario_yaml"])
             world.reset_to_state(q_init, dq_zero, object_states)
