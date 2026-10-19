@@ -102,9 +102,35 @@ def make_bin_wall_cfgs(bin_size: float, wall_thickness: float = 0.02,
     ]
 
 
+def make_bin_wall_rigid_cfgs(bin_size: float, wall_thickness: float = 0.02,
+                             wall_height: float = 0.10) -> list:
+    """Same 3 bin walls as make_bin_wall_cfgs, as kinematic RigidObjectCfg with contact sensing.
+
+    Use these (in object_cfgs, after the blocks) when a contact sensor must see
+    robot–bin collisions; pass skip_bin_walls=True to make_static_cfgs to avoid
+    duplicate collision geometry.  Kinematic, so PhysX keeps them fixed.
+    """
+    return [
+        RigidObjectCfg(
+            prim_path="PLACEHOLDER",
+            spawn=w.spawn.replace(
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True,
+                                                             disable_gravity=True),
+                mass_props=sim_utils.MassPropertiesCfg(mass=1e6),
+                activate_contact_sensors=True,
+            ),
+            init_state=RigidObjectCfg.InitialStateCfg(pos=w.init_state.pos),
+        )
+        for w in make_bin_wall_cfgs(bin_size, wall_thickness, wall_height)
+    ]
+
+
 def make_static_cfgs(stand_urdf: str, bin_size: float | None = None,
-                     wall_thickness: float = 0.02) -> list:
-    """Build AssetBaseCfg entries for the table, stand, and (optionally) bin walls."""
+                     wall_thickness: float = 0.02, skip_bin_walls: bool = False) -> list:
+    """Build AssetBaseCfg entries for the table, stand, and (optionally) bin walls.
+
+    Pass skip_bin_walls=True when using make_bin_wall_rigid_cfgs instead.
+    """
     # stand_cfg = AssetBaseCfg(
     #     prim_path="PLACEHOLDER",  # replaced by _make_scene_cfg
     #     spawn=sim_utils.UrdfFileCfg(
@@ -142,7 +168,7 @@ def make_static_cfgs(stand_urdf: str, bin_size: float | None = None,
     )
 
     cfgs = [table_cfg, stand2_cfg]
-    if bin_size is not None:
+    if bin_size is not None and not skip_bin_walls:
         cfgs += make_bin_wall_cfgs(bin_size, wall_thickness)
     return cfgs
 

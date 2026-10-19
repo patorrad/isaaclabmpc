@@ -82,7 +82,8 @@ costs:
     tcp_floor:     0.0    # penalty for TCP going below table surface + offset
     above_target:     0.0    # replaced by obj_avoidance
     obj_avoidance:    0.0    # 1/(d+eps) repulsion from all blocks (approach mode only)
-    intruder_penalty: 10.0   # penalty for non-target blocks near the bin exit
+    intruder_penalty: 0.0    # penalty for non-target blocks near the bin exit
+    bin_collision:    1.0    # wrist contact force vs. bin walls (needs --scenario with bin_size)
   approach_push_align_threshold:   .3  # push_align below this → "aligned"
   approach_height_match_threshold: 0.02   # height_match below this → "at height"
   obj_avoidance_dist_threshold:    0.1   # repulsion is zero beyond this distance (m)
@@ -104,3 +105,18 @@ costs:
     tcp_floor:        {n: 2, c: 0.025, s: 0.0, r: 1.0e-5}
     obj_avoidance:    {n: 2, c: 0.0,   s: 0.0, r: 0.0}
     intruder_penalty: {n: 2, c: 0.0,   s: 0.0, r: 0.0}
+    bin_collision:    {n: 2, c: 0.0,   s: 0.0, r: 0.0}
+
+
+# pick any seed from that listing, e.g. seed 9
+# mkdir -p /tmp/mppi_10obs_stacked3
+# cp /home/paolo/Documents/puzzle/results/1_verification_alphazero/alphazero_1000_mlp1024_10obs_stacked3_diff_bottom/run_003_seed_3.json /tmp/mppi_10obs_stacked3/
+
+# cd /home/paolo/Documents/puzzle
+# /home/paolo/miniconda3/envs/env_isaaclab/bin/python run_solutions.py \
+#     solutions_dir=/tmp/mppi_10obs_stacked3 \
+#     max_solutions=1 \
+#     show_mpc_world_viewer=true \
+#     save_video=false \
+#     use_wandb=false
+

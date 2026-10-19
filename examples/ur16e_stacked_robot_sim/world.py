@@ -345,8 +345,7 @@ def _run_episode(world, planner, cfg, n_steps: int, vis, n_rollouts_draw: int,
             rollout_bytes = planner.get_rollouts()
             origin   = world.scene.env_origins[0]
             ee_quat  = world.get_ee_quat()[0]
-            goal_now = bytes_to_torch(planner.get_current_goal_pos())
-            vis.update(rollout_bytes, goal_now, ee_quat, origin, n_rollouts_draw)
+            vis.update(rollout_bytes, ee_quat, origin, n_rollouts_draw)
 
         world.apply_robot_cmd(u.view(1, DOF))
         world.step()
@@ -477,14 +476,11 @@ def _quat_apply(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
 
 
 class RolloutVisualiser:
-    """Draws MPPI rollout trajectories and the goal marker each step."""
+    """Draws MPPI rollout trajectories each step."""
 
     # Rollout line colour (RGBA) and thickness
     ROLLOUT_COLOR = (0.1, 0.9, 0.1, 0.25)
     ROLLOUT_WIDTH = 1
-    # Goal sphere colour and size
-    GOAL_COLOR = (1.0, 0.4, 0.0, 1.0)
-    GOAL_SIZE = 15.0
 
     def __init__(self, tcp_offset_local: torch.Tensor):
         """
@@ -499,7 +495,6 @@ class RolloutVisualiser:
     def update(
         self,
         rollouts_bytes: bytes,
-        goal: torch.Tensor,
         ee_quat_world: torch.Tensor,
         env_origin: torch.Tensor,
         n_draw: int,
@@ -514,7 +509,6 @@ class RolloutVisualiser:
         Args:
             rollouts_bytes:  serialised (horizon, num_envs, 3) tensor from planner.
                              Positions are in local (env-relative) frame.
-            goal:            (3,) goal position in local frame.
             ee_quat_world:   (4,) current EE quaternion in world frame (w, x, y, z).
             env_origin:      (3,) world-frame offset of env 0 (scene.env_origins[0]).
             n_draw:          how many rollout trajectories to draw (subsampled).
@@ -526,10 +520,6 @@ class RolloutVisualiser:
 
         # Rotate TCP offset into world frame using current EE orientation
         tcp_offset_world = _quat_apply(ee_quat_world.cpu(), self.tcp_offset_local)
-
-        # ---- goal marker (local → world) ----
-        gp = tuple((goal.cpu() + origin).tolist())
-        self._draw.draw_points([gp], [self.GOAL_COLOR], [self.GOAL_SIZE])
 
         # ---- rollout trajectories ----
         if n_draw <= 0:

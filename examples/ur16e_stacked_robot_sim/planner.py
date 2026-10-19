@@ -72,7 +72,12 @@ from isaaclab_mpc.cost import (
 )
 from isaaclab_mpc.cost.utils import quat_apply
 from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
-from examples.ur16e_stacked_robot_sim.scene import make_static_cfgs, make_block_cfgs, _bin_to_mppi_local, _BLOCK_SPECS
+from examples.ur16e_stacked_robot_sim.scene import (
+    make_static_cfgs, make_block_cfgs, make_bin_wall_rigid_cfgs, _bin_to_mppi_local, _BLOCK_SPECS,
+)
+
+# Contact sensor order in main(): 0 = wrist net force, 1 = wrist vs. bin walls (filtered).
+_BIN_WALL_SENSOR_IDX = 1
 
 
 # ===========================================================================
@@ -93,6 +98,7 @@ class CostWeights:
     above_target:     float = 0.
     obj_avoidance:    float = 0.0  # inverse-distance repulsion from all blocks (approach mode)
     intruder_penalty: float = 0.0  # penalty for non-target blocks near the bin exit
+    bin_collision:    float = 0.0  # contact force between robot and bin walls
 
 
 @dataclass
@@ -124,6 +130,7 @@ class GaussianProjectionConfig:
     above_target:     GaussianProjParams = field(default_factory=GaussianProjParams)
     obj_avoidance:    GaussianProjParams = field(default_factory=GaussianProjParams)
     intruder_penalty: GaussianProjParams = field(default_factory=GaussianProjParams)
+    bin_collision:    GaussianProjParams = field(default_factory=GaussianProjParams)
 
 
 @dataclass
@@ -208,7 +215,7 @@ def _load_config(yaml_path: str) -> PlannerConfig:
             gp.enabled = bool(gp_raw.get("enabled", False))
             _cost_keys = ["robot_to_obj", "obj_to_goal", "robot_ori", "height_match",
                           "push_align", "joint_vel", "collision", "singularity", "tcp_floor",
-                          "above_target", "obj_avoidance", "intruder_penalty"]
+                          "above_target", "obj_avoidance", "intruder_penalty", "bin_collision"]
             for key in _cost_keys:
                 if key in gp_raw:
                     p = gp_raw[key]
@@ -277,6 +284,7 @@ class Objective:
             "above_target":  w.above_target,
             "obj_avoidance":    w.obj_avoidance,
             "intruder_penalty": w.intruder_penalty,
+            "bin_collision":    w.bin_collision,
         }
         self._n_blocks = n_blocks if n_blocks is not None else len(_BLOCK_SPECS)
         self._approach_pa_threshold    = cfg.costs.approach_push_align_threshold
@@ -547,6 +555,9 @@ class Objective:
             raw["collision"] = self._costs["collision"](
                 sim.get_contact_forces(0)
             )
+        if "bin_collision" in self._active_costs:
+            fm = sim.get_contact_pair_forces(_BIN_WALL_SENSOR_IDX)  # (B, 1, n_walls, 3)
+            raw["bin_collision"] = fm.norm(dim=-1).sum(dim=-1).squeeze(-1)
         if "joint_vel" in self._active_costs:
             raw["joint_vel"] = self._costs["joint_vel"](sim.get_joint_vel())
         if "singularity" in self._active_costs:
@@ -685,7 +696,11 @@ def main():
         bin_size = sc.get("bin_size")
 
     block_cfgs = make_block_cfgs(positions=block_positions)
-    static_cfgs = make_static_cfgs(stand_urdf=cfg.stand_urdf, bin_size=bin_size)
+    # Bin walls are kinematic rigid objects (after the blocks) so a contact sensor can
+    # see them; world.py only sends block states, so they are never reset.
+    bin_wall_cfgs = make_bin_wall_rigid_cfgs(bin_size) if bin_size is not None else []
+    static_cfgs = make_static_cfgs(stand_urdf=cfg.stand_urdf, bin_size=bin_size,
+                                   skip_bin_walls=True)
     # static_cfgs[1] is the table: center Z + half-thickness = surface Z
     _table_cfg = static_cfgs[0]
     table_surface_z = _table_cfg.init_state.pos[2] + _table_cfg.spawn.size[2] / 2
@@ -697,6 +712,15 @@ def main():
         debug_vis=False,
         # filter_prim_paths_expr=[f"{{ENV_REGEX_NS}}/Object{i}" for i in range(len(block_cfgs))],
     )
+    n_blocks = len(block_cfgs)
+    bin_wall_contact_sensor = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/wrist_3_link",
+        update_period=0.0,
+        history_length=0,
+        debug_vis=False,
+        filter_prim_paths_expr=[f"{{ENV_REGEX_NS}}/Object{n_blocks + j}"
+                                for j in range(len(bin_wall_cfgs))],
+    ) if bin_wall_cfgs else None
 
     _base_robot_cfg = make_ur16e_cfg(pos=cfg.robot_init_pos, joint_pos=cfg.robot_init_joints)
     robot_cfg = _base_robot_cfg.replace(
@@ -719,9 +743,12 @@ def main():
         objective,
         robot_cfg=robot_cfg,
         prior=None,
-        object_cfgs=block_cfgs,
+        object_cfgs=block_cfgs + bin_wall_cfgs,
         static_cfgs=static_cfgs,
-        contact_sensor_cfgs=[robot_contact_sensor],
+        contact_sensor_cfgs=(
+            [robot_contact_sensor]                                             # idx 0: net force
+            + ([bin_wall_contact_sensor] if bin_wall_contact_sensor else [])   # idx 1: per-wall
+        ),
     )
 
     server = zerorpc.Server(planner)
