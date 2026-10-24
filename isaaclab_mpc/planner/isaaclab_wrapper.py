@@ -20,6 +20,9 @@ BEFORE importing or instantiating this class (IsaacLab requirement).
 
 from __future__ import annotations
 
+import getpass
+import os
+import tempfile
 import threading
 from dataclasses import dataclass
 from typing import List, Optional
@@ -30,7 +33,7 @@ import torch
 import isaaclab.sim as sim_utils
 from isaaclab.assets import ArticulationCfg, AssetBaseCfg, RigidObjectCfg
 from isaaclab.scene import InteractiveScene, InteractiveSceneCfg
-from isaaclab.sensors import ContactSensor, ContactSensorCfg, CameraCfg
+from isaaclab.sensors import ContactSensor, ContactSensorCfg, CameraCfg, RayCasterCfg
 from isaaclab.sim import SimulationContext
 from isaaclab.utils import configclass
 
@@ -60,6 +63,7 @@ def _make_scene_cfg(
     contact_sensor_cfgs: Optional[List[ContactSensorCfg]] = None,
     static_cfgs: Optional[List[AssetBaseCfg]] = None,
     camera_cfgs: Optional[List[CameraCfg]] = None,
+    ray_caster_cfgs: Optional[List[RayCasterCfg]] = None,
 ):
     """Dynamically create an InteractiveSceneCfg subclass with robot, any
     number of rigid objects, contact sensors, and static scene obstacles.
@@ -108,6 +112,11 @@ def _make_scene_cfg(
         ns["__annotations__"][key] = CameraCfg
         ns[key] = camcfg  # prim_path already set by caller (may use {ENV_REGEX_NS})
 
+    for i, rccfg in enumerate(ray_caster_cfgs or []):
+        key = f"ray_caster_{i}"
+        ns["__annotations__"][key] = RayCasterCfg
+        ns[key] = rccfg  # prim_path already set by caller (may use {ENV_REGEX_NS})
+
     _SceneCfg = configclass(type("_SceneCfg", (InteractiveSceneCfg,), ns))
     return _SceneCfg(num_envs=num_envs, env_spacing=env_spacing)
 
@@ -152,6 +161,7 @@ class IsaacLabWrapper:
         contact_sensor_cfgs: Optional[List[ContactSensorCfg]] = None,
         static_cfgs: Optional[List[AssetBaseCfg]] = None,
         camera_cfgs: Optional[List[CameraCfg]] = None,
+        ray_caster_cfgs: Optional[List[RayCasterCfg]] = None,
     ):
         self.cfg = cfg
         self.num_envs = num_envs
@@ -162,7 +172,12 @@ class IsaacLabWrapper:
         # ------------------------------------------------------------------
         # Simulation context
         # ------------------------------------------------------------------
-        sim_cfg = sim_utils.SimulationCfg(dt=cfg.dt, device=cfg.device)
+        # Per-user log dir: the default /tmp/isaaclab/logs may belong to another user
+        # on a shared machine, which makes SimulationContext raise PermissionError.
+        sim_cfg = sim_utils.SimulationCfg(
+            dt=cfg.dt, device=cfg.device,
+            log_dir=os.path.join(tempfile.gettempdir(), f"isaaclab-{getpass.getuser()}", "logs"),
+        )
         self.sim_context = SimulationContext(sim_cfg)
         self.sim_dt = cfg.dt
 
@@ -177,6 +192,7 @@ class IsaacLabWrapper:
             contact_sensor_cfgs=contact_sensor_cfgs,
             static_cfgs=static_cfgs,
             camera_cfgs=camera_cfgs,
+            ray_caster_cfgs=ray_caster_cfgs,
         )
         self.scene = InteractiveScene(scene_cfg)
 
@@ -221,6 +237,13 @@ class IsaacLabWrapper:
         # ------------------------------------------------------------------
         self.cameras: list = [
             self.scene[f"camera_{i}"] for i in range(len(camera_cfgs or []))
+        ]
+
+        # ------------------------------------------------------------------
+        # Ray-caster handles (e.g. ToF sensors) — one entry per configured sensor
+        # ------------------------------------------------------------------
+        self.ray_casters: list = [
+            self.scene[f"ray_caster_{i}"] for i in range(len(ray_caster_cfgs or []))
         ]
 
         # ------------------------------------------------------------------

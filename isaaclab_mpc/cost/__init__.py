@@ -8,6 +8,7 @@ from .singularity_cost import SingularityCost
 from .gaussian_projection import GaussianProjection
 from .tcp_floor_cost import TcpFloorCost
 from .above_object_cost import AboveObjectCost
+from .tof_clearance_cost import ToFClearanceCost
 
 __all__ = [
     "DistCost",
@@ -20,4 +21,5 @@ __all__ = [
     "GaussianProjection",
     "TcpFloorCost",
     "AboveObjectCost",
+    "ToFClearanceCost",
 ]

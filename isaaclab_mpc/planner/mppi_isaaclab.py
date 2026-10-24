@@ -78,6 +78,7 @@ class MPPIIsaacLabPlanner:
         contact_sensor_cfgs: Optional[list] = None,
         static_cfgs: Optional[list] = None,
         scenario_info: dict = None,
+        ray_caster_cfgs: Optional[list] = None,
         read_only: bool = False,
     ):
         self._latest_dof_state: Optional[bytes] = None
@@ -108,13 +109,19 @@ class MPPIIsaacLabPlanner:
                 object_cfgs=object_cfgs,
                 contact_sensor_cfgs=contact_sensor_cfgs,
                 static_cfgs=static_cfgs,
+                ray_caster_cfgs=ray_caster_cfgs,
             )
 
             # ------------------------------------------------------------------
             # Prior (optional learned policy)
             # ------------------------------------------------------------------
             if prior is not None:
-                self.prior = lambda state, t: prior.compute_command(self.sim)
+                # Priors whose compute_command takes (sim, t) also get the rollout step.
+                import inspect
+                if len(inspect.signature(prior.compute_command).parameters) >= 2:
+                    self.prior = lambda state, t: prior.compute_command(self.sim, t)
+                else:
+                    self.prior = lambda state, t: prior.compute_command(self.sim)
             else:
                 self.prior = None
 

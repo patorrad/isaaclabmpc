@@ -72,8 +72,8 @@ if _PROJECT_ROOT not in sys.path:
 from isaaclab.sim import RigidBodyPropertiesCfg
 from isaaclab_mpc.planner.isaaclab_wrapper import IsaacLabWrapper, IsaacLabConfig
 from isaaclab_mpc.utils.transport import torch_to_bytes, bytes_to_torch
-from assets.robots.ur16e import make_ur16e_cfg
-from examples.ur16e_reach_stand_tote.scene import make_static_cfgs, make_block_cfgs
+from assets.robots.ur16e import make_ur16e_cfg, get_tool_length
+from examples.ur16e_reach_stand_tote.scene import make_static_cfgs, make_ycb_cfgs
 
 # ===========================================================================
 # 3. Config
@@ -92,6 +92,8 @@ class WorldConfig:
     isaaclab: IsaacLabCfg = field(default_factory=IsaacLabCfg)
     robot_init_pos: List[float] = field(default_factory=lambda: [0.208, 0.0, 2.075])
     robot_init_joints: List[float] = field(default_factory=lambda: [0.549, -2.2557, 1.0872, 0.8265, 1.5802, 0.5275])
+    objects: List[dict] = field(default_factory=list)   # YCB objects in the tote
+    ycb_friction: float = 0.5
 
 
 def _load_config(yaml_path: str) -> WorldConfig:
@@ -104,6 +106,8 @@ def _load_config(yaml_path: str) -> WorldConfig:
     cfg.stand_urdf        = raw.get("stand_urdf",        cfg.stand_urdf)
     cfg.robot_init_pos    = raw.get("robot_init_pos",    cfg.robot_init_pos)
     cfg.robot_init_joints = raw.get("robot_init_joints", cfg.robot_init_joints)
+    cfg.objects           = raw.get("objects") or []
+    cfg.ycb_friction      = float(raw.get("ycb_friction", cfg.ycb_friction))
 
     if "isaaclab" in raw:
         il = raw["isaaclab"]
@@ -239,14 +243,14 @@ def main():
         num_envs=1,
         ee_link_name="wrist_3_link",
         goal=[0.40, 0.10, 0.92],
-        # object_cfgs=make_block_cfgs(),
+        object_cfgs=make_ycb_cfgs(cfg.objects, friction=cfg.ycb_friction),
         static_cfgs=make_static_cfgs(stand_urdf=cfg.stand_urdf),
     )
     device = world.device
 
     GoalController(world._goal, world._goal_lock)
 
-    tcp_offset_local = torch.tensor([0.0, 0.0, 0.12])
+    tcp_offset_local = torch.tensor([0.0, 0.0, get_tool_length()])   # same tip as the planner
     vis = RolloutVisualiser(tcp_offset_local)
 
     # ------------------------------------------------------------------

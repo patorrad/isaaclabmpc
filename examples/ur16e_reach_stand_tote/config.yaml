@@ -54,4 +54,124 @@ isaaclab:
   # Table is 2.5m in Y — envs must be spaced far enough that tables don't overlap.
   # Minimum: 2 * 1.25m (table half-extent) + margin = 3.0m
   env_spacing: 3.0
+
+costs:
+  weights:
+    ee_to_goal: 30.0   # L1 distance TCP tip → goal (m)
+    robot_ori:   7.0   # tool tilt from straight down (rad); yaw is free
+    joint_vel:   1.0   # joint velocity magnitude
+    tof_collision: 50.0  # ToF reading closer than tof_clearance: 0 when clear, 1 per sensor at contact
+  # Distance from the ToF sensor (not the tool tip) below which readings are penalised.
+  # The tip is ~0.118 m ahead of the sensor along its boresight (placeholder mount), so
+  # 0.17 ≈ tip + 5 cm straight ahead; side zones see nearby surfaces at the same radius.
+  tof_clearance: 0.17
+  gaussian_projection:
+    enabled: false
+    ee_to_goal: {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    robot_ori:  {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    joint_vel:  {n: 2, c: 0.0, s: 0.0, r: 0.0}
+    tof_collision: {n: 2, c: 0.0, s: 0.0, r: 0.0}
+
+# Real objects (YCB) in the tote; spawned identically in world.py and in the planner's rollouts.
+#   name: short name (cracker_box), alias (soup_can, mustard, drill, ...) or id (003_cracker_box);
+#         catalogue in assets/ycb/objects.json
+#   pos:  world [x, y] — the object rests on the tote floor — or [x, y, z] for its bbox centre
+#   yaw:  degrees about +Z
+# Tote interior is roughly x 0.16–0.64, y -0.17–0.17. Meshes stream from NVIDIA's asset server.
+#   target: true marks the hidden object to find (search below): world.py spawns it, the planner
+#           does not know about it. At most one.
+# Default scene: a tuna can hidden under the cracker box (box resting on the can), plus two distractors.
+objects:
+  - {name: tuna_can,    pos: [0.33, 0.0, 0.7528], yaw: 0, target: true}
+  - {name: cracker_box, pos: [0.33, 0.0, 0.8073], yaw: 0}
+  - {name: soup_can,    pos: [0.52, -0.09], yaw: 0}
+  - {name: sugar_box,   pos: [0.53,  0.07], yaw: 0}
+ycb_friction: 0.5
+
+# VL53L5CX 8x8 multizone ToF sensors (Isaac Lab MultiMeshRayCaster), in world.py and the planner.
+#   link:    robot link the sensor is fixed to
+#   pos:     sensor origin in that link's frame (m); wrist_3_link +Z is the tool axis
+#   rpy_deg: sensor orientation in that frame; the boresight is the sensor's +Z
+# Each sensor gives (8, 8) zone distances (m, inf = no target in 0.02–4 m) over a 45x45 deg FoV.
+# PLACEHOLDER pose: beside the tool coupling, looking down the tool axis — set to the real mount.
+tof_sensors:
+  - {link: wrist_3_link, pos: [0.045, 0.0, 0.017], rpy_deg: [0, 0, 0]}
+tof_rays_per_zone: 2   # rays per zone side (2 → 4 rays/zone, 256/sensor); zone = closest hit
+tof_hit_radius: 0.0005  # world.py viewer: radius (m) of the sphere drawn at each ray hit (Isaac default 0.02)
+
 stand_urdf: "/home/paolo/Documents/isaaclabmpc/assets/fixed_assets/stand/stand.urdf"
+
+# Hidden-object search (after mppi_playground): a UCT tree over tool-tip moves, push macros and
+# view macros plans to reveal floor where the target may still be (belief from the latest ToF
+# frame); its best path guides MPPI. While enabled, world.py's goal is ignored and the
+# tof_collision cost is turned off (it would fight deliberate pushes).
+search:
+  enabled: true
+  # Re-plan when the TCP reaches the plan's end, makes no progress along it for
+  # replan_stuck_steps control steps, or the plan is replan_max_age steps old.
+  replan_reach: 0.02
+  replan_stuck_steps: 30
+  replan_max_age: 150
+  outer_margin: 0.25       # with the tool above the rim it may be this far outside the tote (x/y)
+  fallback_z: 0.95         # no plan from here: MPPI lifts the tool to this height, then re-plans
+  iterations: 800
+  c: 0.7                   # UCT exploration (rewards are on a ~[-1, 1] scale)
+  depth: 10
+  rollout_depth: 4
+  n_dirs: 6                # move directions: 6 (axes), 14, 26
+  n_sub: 3
+  speed: 0.1               # m/s; a move is speed * action_time
+  action_time: 0.5
+  res: 0.01                # belief cell size (m)
+  workspace_z: [0.74, 1.30]  # tool-tip height limits (the robot starts at ~1.22); x/y: tote interior.
+                             # A 1.12 m ceiling stopped pushes from working in tests; keep 1.30.
+  push_macros: true
+  push_dist: 0.06
+  push_gap: 0.01           # tool comes down this far from the face before sweeping (3 cm did not help
+                           # with perceived poses in tests)
+  n_views: 3
+  view_grid: 0.05
+  view_clearance: 0.12     # viewpoints: this far above the tallest known object (at least 0.2 m above the floor)
+  w_info: 1.0              # per unit of target probability newly seen
+  w_push: 0.02
+  w_len: 0.05              # per metre travelled
+  w_collision: 1.0
+  w_obstacle: 0.0
+  margin: 0.02
+  w_dturn: 0.01
+  w_heur: 0.3
+  heur_sigma: 0.1
+  done_eps: 0.02
+  found_min_zones: 2       # world.py: target found when this many ToF zones hit it (ground truth)
+  debug: false             # planner: print TCP / goal / path progress / object poses every 25 steps
+  draw_tree: true          # world.py viewer: draw the whole search tree (cyan, opacity = visits; red = collision)
+  waypoint:
+    enabled: true          # MPPI's goal = point `lookahead` along the tree's best path
+    lookahead: 0.08
+    corner_deg: 45         # the waypoint stops at sharper path corners until the TCP reaches them
+    corner_tol: 0.015
+  prior:
+    enabled: true          # one rollout follows the best path (Jacobian tracker), unperturbed
+    n_samples: 1
+    gain: 4.0
+    lookahead: 0.05
+
+# Where the planner's object poses come from.
+#   privileged : world.py sends the known objects' true poses (upper bound, sim only)
+#   tof        : from the ToF frames alone (voxel map → clusters → known-mesh pose fits)
+#   tof+camera : ToF plus a wrist depth camera
+# The tote is known; object identities and meshes are known, their poses are not.
+perception:
+  mode: privileged # tof
+  update_every: 10         # re-segment and re-fit every N control steps
+  res: 0.01                # voxel size (m)
+  tof_subrays: 3           # each ToF zone is integrated as k x k sub-rays
+  min_score: 1.5
+  wrist_camera:            # used by mode tof+camera (RealSense D405-like: 87x58 deg, 7–50 cm)
+    link: wrist_3_link
+    pos: [0.0, 0.06, 0.03] # in the link frame; ROS convention, so rpy 0 looks along the tool axis
+    rpy_deg: [0, 0, 0]
+    width: 160
+    height: 96
+    stride: 2              # use every 2nd pixel → 80 x 48 rays per frame
+    tool_filter_radius: 0.05   # drop depth hits within this distance of the tool axis
